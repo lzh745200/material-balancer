@@ -1,0 +1,61 @@
+appId: com.materialbalancer.app
+productName: 物资均衡分配工具
+copyright: Copyright © 2026 Material Balancer
+
+directories:
+  output: dist
+  buildResources: build
+
+# electron-vite 构建产物（主进程已把纯 JS 依赖打包进 out，无需携带 node_modules）
+files:
+  - out/**
+
+asar: true
+
+# 内置中文字体放到 asar 外，供 PDF 打印模板以 file:// 绝对路径加载
+extraResources:
+  - from: resources/fonts
+    to: fonts
+    filter:
+      - '**/*'
+
+win:
+  icon: build/icon.ico
+  artifactName: ${name}-${version}-win64-${arch}.${ext}
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: 物资均衡分配工具
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  artifactName: ${name}-${version}-win64-setup.${ext}
+
+portable:
+  artifactName: ${name}-${version}-win64-portable.${ext}
+
+linux:
+  icon: build/icon.png
+  category: Utility
+  maintainer: material-balancer
+  artifactName: ${name}-${version}-linux-${arch}.${ext}
+  target:
+    - target: deb
+      arch:
+        - arm64
+    - target: tar.gz
+      arch:
+        - arm64
+
+deb:
+  artifactName: ${name}-${version}-linux-arm64.${ext}

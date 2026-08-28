@@ -1,0 +1,47 @@
+{
+  "name": "material-balancer",
+  "version": "1.0.0",
+  "description": "物资均衡分配工具 - 将物资清单公平分配给若干人员并生成可打印的 A4 签字表格（完全离线）",
+  "main": "out/main/index.js",
+  "author": "Material Balancer Team",
+  "license": "MIT",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
+    "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json",
+    "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "icons": "node scripts/gen-icons.mjs",
+    "dist:win": "npm run build && electron-builder --win --x64",
+    "dist:linux": "npm run build && electron-builder --linux",
+    "dist": "npm run build && electron-builder -mwl"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "^2.3.1",
+    "element-plus": "^2.9.1",
+    "iconv-lite": "^0.6.3",
+    "papaparse": "^5.4.1",
+    "pinia": "^2.3.0",
+    "vue": "^3.5.13",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.10",
+    "@types/papaparse": "^5.3.15",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "electron": "^37.0.0",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^2.3.0",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11",
+    "vitest": "^2.1.8",
+    "vue-tsc": "^2.1.10"
+  }
+}
