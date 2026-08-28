@@ -24,6 +24,7 @@
     "src/renderer/src/algorithms/**/*.ts",
     "src/renderer/src/print/**/*.ts",
     "src/renderer/src/utils/**/*.ts",
+    "src/renderer/src/stores/**/*.ts",
     "tests/**/*.ts",
     "electron.vite.config.ts",
     "vitest.config.ts"
