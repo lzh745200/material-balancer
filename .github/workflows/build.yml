@@ -28,7 +28,7 @@ jobs:
         run: npm run build
 
       - name: 打包 Windows 安装包
-        run: npx electron-builder --win --x64
+        run: npx electron-builder --win --x64 --publish never
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
@@ -59,7 +59,7 @@ jobs:
 
       # x64 交叉打包 arm64：electron-builder 会下载 arm64 版 Electron 二进制，无需 ARM 机器
       - name: 打包 Linux ARM64（deb + tar.gz）
-        run: npx electron-builder --linux
+        run: npx electron-builder --linux --publish never
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
