@@ -114,7 +114,7 @@ describe('optimizeAssignment 局部优化', () => {
     const opt = optimizeAssignment(dirty, units, ids)
     // ghost 指向的件被忽略，其余仍可优化且不抛异常
     expect(opt.assignment['m1#1']).toBe('ghost')
-    for (const [unitId, personId] of Object.entries(opt.assignment)) {
+    for (const personId of Object.values(opt.assignment)) {
       if (personId !== 'ghost') expect(ids).toContain(personId)
     }
   })

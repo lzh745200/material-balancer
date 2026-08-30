@@ -33,7 +33,7 @@ import type { GlobalStats } from '@/algorithms'
 import { useProjectStore } from '@/stores/project'
 import { formatMoney } from '@/utils/format'
 
-const props = defineProps<{ stats: GlobalStats }>()
+defineProps<{ stats: GlobalStats }>()
 
 const store = useProjectStore()
 const money = (v: number) => formatMoney(v, store.currency)

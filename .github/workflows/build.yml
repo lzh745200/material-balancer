@@ -6,10 +6,15 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
+# 同一分支的快速连续推送只保留最新一次完整构建
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build-windows:
-    name: Windows x64（安装版 + 便携版）
-    runs-on: windows-latest
+  test:
+    name: 质量门禁（lint + typecheck + 单元测试）
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -21,8 +26,45 @@ jobs:
       - name: 安装依赖
         run: npm ci
 
+      - name: ESLint
+        run: npm run lint
+
+      - name: TypeScript 类型检查
+        run: npm run typecheck
+
       - name: 单元测试
         run: npm test
+
+      - name: 发布前校验 tag 与 package.json 版本一致
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG="${GITHUB_REF#refs/tags/v}"
+          PKG=$(node -p "require('./package.json').version")
+          if [ "$TAG" != "$PKG" ]; then
+            echo "tag v$TAG 与 package.json 版本 $PKG 不一致"
+            exit 1
+          fi
+
+  build-windows:
+    name: Windows x64（安装版 + 便携版）
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: 缓存 Electron 二进制
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: 安装依赖
+        run: npm ci
 
       - name: 构建
         run: npm run build
@@ -36,9 +78,11 @@ jobs:
           name: windows-x64
           path: dist/*.exe
           if-no-files-found: error
+          retention-days: 14
 
   build-linux-arm64:
     name: Linux ARM64（deb + tar.gz，适配麒麟 V10）
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -48,11 +92,14 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
+      - name: 缓存 Electron 二进制
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
       - name: 安装依赖
         run: npm ci
-
-      - name: 单元测试
-        run: npm test
 
       - name: 构建
         run: npm run build
@@ -69,6 +116,7 @@ jobs:
             dist/*.deb
             dist/*.tar.gz
           if-no-files-found: error
+          retention-days: 14
 
   release:
     name: 发布 Release
