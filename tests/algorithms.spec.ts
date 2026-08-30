@@ -4,6 +4,7 @@ import {
   distribute,
   expandUnits,
   greedyAssign,
+  greedyAssignCapped,
   mulberry32,
   optimizeAssignment,
   randomAssign
@@ -119,6 +120,26 @@ describe('optimizeAssignment 局部优化', () => {
     }
   })
 
+  it('锁定的件不参与移动与交换', () => {
+    const units = expandUnits(mkMaterials([3, 3, 2, 2, 2]))
+    const ids = mkPeople(2).map((p) => p.id)
+    const greedy = greedyAssign(units, ids)
+    // 锁住全部高价值件（3,3）后，优化只能动剩下的
+    const locked = new Set(['m1#1', 'm2#1'])
+    const opt = optimizeAssignment(greedy, units, ids, { locked })
+    expect(opt.assignment['m1#1']).toBe(greedy['m1#1'])
+    expect(opt.assignment['m2#1']).toBe(greedy['m2#1'])
+  })
+
+  it('锁定全部件时结果与输入一致', () => {
+    const units = expandUnits(mkMaterials([3, 3, 2, 2, 2]))
+    const ids = mkPeople(2).map((p) => p.id)
+    const greedy = greedyAssign(units, ids)
+    const opt = optimizeAssignment(greedy, units, ids, { locked: new Set(units.map((u) => u.unitId)) })
+    expect(opt.assignment).toEqual(greedy)
+    expect(opt.improved).toBe(false)
+  })
+
   it('500 件规模下两次运行结果完全一致（确定性预算）', () => {
     const rng = mulberry32(7)
     const materials = mkMaterials(Array.from({ length: 500 }, () => Math.floor(rng() * 1000) + 1))
@@ -128,6 +149,27 @@ describe('optimizeAssignment 局部优化', () => {
     const a = optimizeAssignment(greedy, units, ids).assignment
     const b = optimizeAssignment(greedy, units, ids).assignment
     expect(a).toEqual(b)
+  })
+})
+
+describe('greedyAssignCapped 允许剩余模式', () => {
+  it('每人不超过上限，装不下的件留作未分配', () => {
+    // 单价 6,5,4,3,2,1，总 21，两人 cap=10.5
+    const units = expandUnits(mkMaterials([6, 5, 4, 3, 2, 1]))
+    const ids = mkPeople(2).map((p) => p.id)
+    const assignment = greedyAssignCapped(units, ids, 10.5)
+    const totals = totalsOf(assignment, units, mkPeople(2))
+    // 装填结果 6+3+1=10、5+4=9，单价 2 的件谁装都超限，留在池里
+    expect(totals.every((t) => t <= 10.5 + 1e-9)).toBe(true)
+    expect(Object.keys(assignment)).toHaveLength(5)
+    expect(assignment['m5#1']).toBeUndefined()
+    expect(assignment['m6#1']).toBeDefined()
+  })
+
+  it('无人员或无物资时返回空分配', () => {
+    expect(greedyAssignCapped([], ['p1'], 10)).toEqual({})
+    const units = expandUnits(mkMaterials([1]))
+    expect(greedyAssignCapped(units, [], 10)).toEqual({})
   })
 })
 
@@ -194,6 +236,20 @@ describe('distribute 端到端', () => {
     const r = distribute(mkMaterials([1, 2, 3]), [], 'optimized')
     expect(r.assignment).toEqual({})
     expect(r.stats.avg).toBe(0)
+  })
+
+  it('active=false 的人员不参与分配与统计', () => {
+    const people = [
+      ...mkPeople(2),
+      { id: 'p3', name: '请假者', active: false }
+    ]
+    const materials = mkMaterials([3, 3, 2, 2, 2])
+    const { assignment, stats } = distribute(materials, people, 'optimized')
+    // 全部件都分给前两人
+    for (const owner of Object.values(assignment)) {
+      expect(['p1', 'p2']).toContain(owner)
+    }
+    expect(stats.totals.map((t) => t.personId)).toEqual(['p1', 'p2'])
   })
 
   it('同一输入两次运行结果完全一致（确定性）', () => {

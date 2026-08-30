@@ -202,7 +202,12 @@ export function useProjectActions() {
   }
 
   function buildHtml(): string {
-    const rows = buildPersonRows(store.people, store.units, store.activeScheme!.assignment)
+    // 已排除（不参与分配）的人员不进入打印表
+    const rows = buildPersonRows(
+      store.people.filter((p) => p.active !== false),
+      store.units,
+      store.activeScheme!.assignment
+    )
     return buildPrintHtml({
       title: store.title,
       remark: store.remark,
@@ -241,7 +246,11 @@ export function useProjectActions() {
   async function onExportCsv(): Promise<void> {
     if (!requireScheme()) return
     if (!(await confirmStale())) return
-    const rows = buildPersonRows(store.people, store.units, store.activeScheme!.assignment)
+    const rows = buildPersonRows(
+      store.people.filter((p) => p.active !== false),
+      store.units,
+      store.activeScheme!.assignment
+    )
     const res = await window.api.exportCsv(
       buildDetailCsv(rows, store.currency),
       `${store.defaultFileName}.csv`

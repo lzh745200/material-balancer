@@ -8,7 +8,15 @@ import type {
 } from '@shared/types'
 import { MAX_UNITS } from '@shared/types'
 import { validateProject, DEFAULT_TITLE } from '@shared/validate'
-import { distribute, computeStats, expandUnits, type AutoStrategy, type GlobalStats } from '@/algorithms'
+import {
+  computeStats,
+  distribute,
+  expandUnits,
+  greedyAssignCapped,
+  optimizeAssignment,
+  type AutoStrategy,
+  type GlobalStats
+} from '@/algorithms'
 import { uid } from '@/utils/id'
 import { formatDate, round2 } from '@/utils/format'
 
@@ -72,7 +80,16 @@ export const useProjectStore = defineStore('project', {
     ...emptySnapshot(),
     past: [] as Snapshot[],
     future: [] as Snapshot[],
-    draftSavedAt: '' as string
+    draftSavedAt: '' as string,
+    /* ----- 分配偏好（会话级，不随项目文件保存） ----- */
+    /** 允许剩余：每人不超过平均价值，装不下的件留作未分配 */
+    allowSurplus: false,
+    /** 优化策略最大轮数 */
+    optimizeMaxPasses: 100,
+    /** 随机模式重启次数 */
+    randomRestarts: 24,
+    /** 随机种子（null = 每次随机） */
+    randomSeed: null as number | null
   }),
 
   getters: {
@@ -121,7 +138,10 @@ export const useProjectStore = defineStore('project', {
 
     stats(state): GlobalStats | null {
       if (!state.schemes.length || !state.people.length) return null
-      return computeStats(this.activeAssignment, this.units, state.people.map((p) => p.id))
+      // 只统计参与分配的人员：被排除者按 0 计会虚高最大差值
+      const ids = state.people.filter((p) => p.active !== false).map((p) => p.id)
+      if (!ids.length) return null
+      return computeStats(this.activeAssignment, this.units, ids)
     },
 
     /** 当前方案未覆盖到的件数（未分配 或 指向已删除人员） */
@@ -158,7 +178,7 @@ export const useProjectStore = defineStore('project', {
     /** 差值超过平均值 10% 时给出调整建议 */
     overDiffWarning(): boolean {
       const stats = this.stats
-      if (!stats || this.people.length < 2) return false
+      if (!stats || stats.totals.length < 2) return false
       const assigned = this.units.some((u) => this.activeAssignment[u.unitId])
       return assigned && stats.avg > 0 && stats.diff > stats.avg * 0.1
     },
@@ -389,6 +409,14 @@ export const useProjectStore = defineStore('project', {
       ;[this.people[idx], this.people[target]] = [this.people[target], this.people[idx]]
     },
 
+    /** 切换人员是否参与分配（排除后生成方案时不再分给他） */
+    togglePersonActive(id: string): void {
+      const p = this.people.find((x) => x.id === id)
+      if (!p) return
+      this.pushHistory()
+      p.active = p.active === false
+    },
+
     addImportedPeople(names: string[]): void {
       if (!names.length) return
       this.pushHistory()
@@ -402,10 +430,27 @@ export const useProjectStore = defineStore('project', {
 
     /* ---------- 分配方案 ---------- */
 
-    /** 生成新方案（自动策略）。物资超限抛出异常，由调用方提示。 */
+    /** 生成新方案（自动策略）。物资超限 / 无参与人员时抛出异常，由调用方提示。 */
     generateAllocation(strategy: AutoStrategy): void {
+      if (!this.materials.length) throw new Error('没有可分配的物资，请先添加或导入物资')
+      // 只让 active !== false 的人参与均衡
+      const participants = this.people.filter((p) => p.active !== false)
+      if (!participants.length) {
+        throw new Error('没有参与分配的人员，请在人员卡片上打开「参与分配」开关')
+      }
       // 先计算再入历史：抛异常时不产生任何状态变化
-      const result = distribute(this.materials, this.people, strategy)
+      let assignment: Record<string, string>
+      if (this.allowSurplus) {
+        // 允许剩余：每人不超过人均价值，装不下的件留作未分配
+        const units = expandUnits(this.materials)
+        const totalValue = units.reduce((acc, u) => acc + u.price, 0)
+        assignment = greedyAssignCapped(units, participants.map((p) => p.id), totalValue / participants.length)
+      } else {
+        assignment = distribute(this.materials, participants, strategy, {
+          optimize: { maxPasses: this.optimizeMaxPasses },
+          random: { restarts: this.randomRestarts, seed: this.randomSeed ?? undefined }
+        }).assignment
+      }
       this.pushHistory()
       // 编号取现有最大编号 + 1，删除中间方案后不会重名
       const maxNum = this.schemes.reduce((acc, s) => {
@@ -416,8 +461,9 @@ export const useProjectStore = defineStore('project', {
         id: uid('s'),
         name: `方案${maxNum + 1}`,
         createdAt: new Date().toISOString(),
-        strategy,
-        assignment: result.assignment
+        // 剩余模式的实际算法是带人均上限的贪心装填，如实记为 greedy
+        strategy: this.allowSurplus ? 'greedy' : strategy,
+        assignment
       }
       this.schemes.push(scheme)
       if (this.schemes.length > SCHEME_LIMIT) this.schemes.shift()
@@ -456,6 +502,42 @@ export const useProjectStore = defineStore('project', {
       scheme.strategy = 'manual'
     },
 
+    /** 锁定 / 解锁一件物资：锁定件在「重新优化」时保持归属不变 */
+    toggleUnitLock(unitId: string): void {
+      const scheme = this.activeScheme
+      if (!scheme || !this.unitMap.has(unitId)) return
+      this.pushHistory()
+      const locked = new Set(scheme.lockedUnits ?? [])
+      if (locked.has(unitId)) locked.delete(unitId)
+      else locked.add(unitId)
+      scheme.lockedUnits = locked.size ? [...locked] : undefined
+    },
+
+    /**
+     * 在当前方案上重新优化：保留锁定件的归属，
+     * 其余件通过局部搜索继续缩小差距（不新建方案）。
+     */
+    reoptimizeCurrent(): void {
+      const scheme = this.activeScheme
+      if (!scheme) return
+      const ids = this.people.filter((p) => p.active !== false).map((p) => p.id)
+      if (ids.length < 2) throw new Error('参与分配的人员不足 2 人，无法优化')
+      const result = optimizeAssignment(scheme.assignment, this.units, ids, {
+        maxPasses: this.optimizeMaxPasses,
+        locked: new Set(scheme.lockedUnits ?? [])
+      })
+      this.pushHistory()
+      scheme.assignment = result.assignment
+    },
+
+    /** 解锁当前方案的全部锁定件 */
+    unlockAllUnits(): void {
+      const scheme = this.activeScheme
+      if (!scheme?.lockedUnits?.length) return
+      this.pushHistory()
+      scheme.lockedUnits = undefined
+    },
+
     switchScheme(id: string): void {
       if (!this.schemes.some((s) => s.id === id)) return
       this.pushHistory()
@@ -480,6 +562,23 @@ export const useProjectStore = defineStore('project', {
     },
 
     /* ---------- 设置 ---------- */
+
+    /** 更新分配偏好（会话级，不进入撤销历史、不随项目保存） */
+    setAlgoPrefs(patch: {
+      allowSurplus?: boolean
+      optimizeMaxPasses?: number
+      randomRestarts?: number
+      randomSeed?: number | null
+    }): void {
+      if (patch.allowSurplus !== undefined) this.allowSurplus = patch.allowSurplus
+      if (patch.optimizeMaxPasses !== undefined) {
+        this.optimizeMaxPasses = Math.min(500, Math.max(1, Math.floor(patch.optimizeMaxPasses)))
+      }
+      if (patch.randomRestarts !== undefined) {
+        this.randomRestarts = Math.min(100, Math.max(0, Math.floor(patch.randomRestarts)))
+      }
+      if (patch.randomSeed !== undefined) this.randomSeed = patch.randomSeed
+    },
 
     updateSettings(patch: { title?: string; remark?: string; currency?: string }): void {
       this.pushHistory()

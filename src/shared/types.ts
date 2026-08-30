@@ -13,10 +13,12 @@ export interface Material {
   quantity: number
 }
 
-/** 人员 */
+/** 人员（active=false 表示本轮不参与分配） */
 export interface Person {
   id: string
   name: string
+  /** 缺省视为参与；仅会话内切换，导出打印时排除 */
+  active?: boolean
 }
 
 /** 分配策略 */
@@ -37,6 +39,8 @@ export interface AllocationScheme {
   strategy: Strategy
   /** unitId -> personId（按拆分件存储，unitId 规则见 UNIT_ID） */
   assignment: Record<string, string>
+  /** 手动锁定的件：重新优化时保持不变 */
+  lockedUnits?: string[]
 }
 
 /** 项目文件（.mproj，JSON 格式） */

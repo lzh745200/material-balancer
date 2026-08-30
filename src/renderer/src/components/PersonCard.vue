@@ -2,7 +2,7 @@
   <el-card
     class="person-card"
     shadow="hover"
-    :class="{ 'drag-over': dragOver }"
+    :class="{ 'drag-over': dragOver, inactive: person.active === false }"
     @dragover.prevent="onDragOver"
     @dragleave="dragOver = false"
     @drop.prevent="onDrop"
@@ -11,6 +11,16 @@
       <div class="card-head">
         <span class="name" :title="person.name">{{ person.name }}</span>
         <span class="meta">{{ stat.count }} 件 · {{ money(stat.total) }}</span>
+        <el-tooltip
+          :content="person.active === false ? '已排除：生成方案时不分给此人' : '参与分配中，关闭开关可排除此人'"
+          placement="top"
+        >
+          <el-switch
+            :model-value="person.active !== false"
+            size="small"
+            @update:model-value="toggleActive"
+          />
+        </el-tooltip>
       </div>
     </template>
     <div class="chips">
@@ -19,12 +29,14 @@
         :key="u.unitId"
         size="small"
         class="chip"
-        :title="`${u.name} 单价 ${money(u.price)}`"
+        :class="{ 'chip-locked': isLocked(u.unitId) }"
+        :title="lockTitle(u)"
         draggable="true"
         @dragstart="onDragStart($event, u)"
         @dragend="dragOver = false"
+        @click.stop="store.toggleUnitLock(u.unitId)"
       >
-        {{ u.name }} · {{ money(u.price) }}
+        <span v-if="isLocked(u.unitId)">🔒 </span>{{ u.name }} · {{ money(u.price) }}
       </el-tag>
       <span v-if="!units.length" class="empty">暂无物资，可把其他卡片的物资拖到此处</span>
     </div>
@@ -49,6 +61,20 @@ const stat = computed(() => {
   return stats.totals[0]
 })
 const money = (v: number) => formatMoney(v, store.currency)
+
+function isLocked(unitId: string): boolean {
+  return store.activeScheme?.lockedUnits?.includes(unitId) ?? false
+}
+
+function lockTitle(u: Unit): string {
+  return isLocked(u.unitId)
+    ? `已锁定：${u.name}（点击解锁，重新优化时保持不变）`
+    : `${u.name} 单价 ${money(u.price)}（点击锁定，重新优化时保持归属）`
+}
+
+function toggleActive(): void {
+  store.togglePersonActive(props.person.id)
+}
 
 function onDragStart(e: DragEvent, unit: Unit): void {
   e.dataTransfer?.setData('text/plain', unit.unitId)
@@ -77,11 +103,14 @@ function onDrop(e: DragEvent): void {
 <style scoped>
 .person-card {
   width: 100%;
-  transition: box-shadow 0.15s, border-color 0.15s;
+  transition: box-shadow 0.15s, border-color 0.15s, opacity 0.15s;
 }
 .person-card.drag-over {
   border: 1px solid #409eff;
   box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.25);
+}
+.person-card.inactive {
+  opacity: 0.55;
 }
 .card-head {
   display: flex;
@@ -100,6 +129,10 @@ function onDrop(e: DragEvent): void {
   font-size: 12px;
   color: #606266;
 }
+.card-head .el-switch {
+  flex: none;
+  align-self: center;
+}
 .chips {
   display: flex;
   flex-wrap: wrap;
@@ -112,6 +145,10 @@ function onDrop(e: DragEvent): void {
 }
 .chip:active {
   cursor: grabbing;
+}
+.chip-locked {
+  border-color: #e6a23c;
+  color: #e6a23c;
 }
 .empty {
   font-size: 12px;

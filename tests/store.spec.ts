@@ -332,4 +332,75 @@ describe('分配方案', () => {
     expect(store.wouldExceedUnitLimit(1)).toBe(false)
     expect(store.wouldExceedUnitLimit(2)).toBe(true)
   })
+
+  it('排除人员后生成方案不分给他，且不出现在统计中', () => {
+    const store = useProjectStore()
+    store.addMaterial('A', 3, 2)
+    store.addPerson('张三')
+    store.addPerson('李四')
+    store.addPerson('王五')
+    store.togglePersonActive(store.people[2].id)
+    expect(store.people[2].active).toBe(false)
+    store.generateAllocation('greedy')
+    for (const owner of Object.values(store.activeAssignment)) {
+      expect(owner).not.toBe(store.people[2].id)
+    }
+    expect(store.stats!.totals.map((t) => t.personId)).toEqual([store.people[0].id, store.people[1].id])
+    // 重新打开参与开关，撤销链路可用
+    store.togglePersonActive(store.people[2].id)
+    expect(store.people[2].active).toBe(true)
+  })
+
+  it('全部人员被排除时生成报错', () => {
+    const store = useProjectStore()
+    store.addMaterial('A', 3, 1)
+    store.addPerson('张三')
+    store.togglePersonActive(store.people[0].id)
+    expect(() => store.generateAllocation('greedy')).toThrow(/参与分配/)
+  })
+
+  it('锁定件在重新优化时保持归属', () => {
+    const store = useProjectStore()
+    store.addMaterial('A', 3, 1)
+    store.addMaterial('B', 3, 1)
+    store.addMaterial('C', 2, 3)
+    store.addPerson('张三')
+    store.addPerson('李四')
+    store.generateAllocation('greedy')
+    const unitId = store.units[0].unitId
+    const owner = store.activeAssignment[unitId]
+    store.toggleUnitLock(unitId)
+    expect(store.activeScheme!.lockedUnits).toEqual([unitId])
+    store.reoptimizeCurrent()
+    expect(store.activeAssignment[unitId]).toBe(owner)
+    // 解锁全部
+    store.unlockAllUnits()
+    expect(store.activeScheme!.lockedUnits).toBeUndefined()
+  })
+
+  it('允许剩余模式：超人均的件留在未分配池', () => {
+    const store = useProjectStore()
+    store.addMaterial('贵重物', 90, 1)
+    store.addMaterial('小件', 1, 10)
+    store.addPerson('张三')
+    store.addPerson('李四')
+    store.setAlgoPrefs({ allowSurplus: true })
+    store.generateAllocation('greedy')
+    // 总值 100，人均 50：90 元的贵重物谁拿都超限，留在池里
+    expect(store.unassignedCount).toBe(1)
+    // 每人不超过 50
+    for (const t of store.stats!.totals) expect(t.total).toBeLessThanOrEqual(50 + 1e-9)
+    // 方案如实记为 greedy
+    expect(store.activeScheme!.strategy).toBe('greedy')
+  })
+
+  it('setAlgoPrefs 会钳制非法参数', () => {
+    const store = useProjectStore()
+    store.setAlgoPrefs({ optimizeMaxPasses: -5, randomRestarts: 999, randomSeed: 42 })
+    expect(store.optimizeMaxPasses).toBe(1)
+    expect(store.randomRestarts).toBe(100)
+    expect(store.randomSeed).toBe(42)
+    store.setAlgoPrefs({ randomSeed: null })
+    expect(store.randomSeed).toBeNull()
+  })
 })

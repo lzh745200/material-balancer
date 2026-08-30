@@ -36,7 +36,7 @@ export function validateProject(raw: unknown): ProjectFile | null {
     if (typeof p !== 'object' || p === null) return []
     const x = p as Record<string, unknown>
     if (typeof x.id !== 'string' || !x.id || typeof x.name !== 'string' || !x.name.trim()) return []
-    return [{ id: x.id, name: x.name }]
+    return [{ id: x.id, name: x.name, active: x.active !== false }]
   })
 
   const validPersonIds = new Set(people.map((p) => p.id))
@@ -58,6 +58,15 @@ export function validateProject(raw: unknown): ProjectFile | null {
           if (typeof personId !== 'string' || !validPersonIds.has(personId)) continue
           assignment[unitId] = personId
         }
+        const lockedUnits = Array.isArray(x.lockedUnits)
+          ? [
+              ...new Set(
+                (x.lockedUnits as unknown[]).filter(
+                  (u): u is string => typeof u === 'string' && validUnitIds.has(u)
+                )
+              )
+            ]
+          : []
         return [
           {
             id: x.id,
@@ -66,7 +75,8 @@ export function validateProject(raw: unknown): ProjectFile | null {
             strategy: VALID_STRATEGIES.includes(x.strategy as Strategy)
               ? (x.strategy as Strategy)
               : 'manual',
-            assignment
+            assignment,
+            ...(lockedUnits.length ? { lockedUnits } : {})
           }
         ]
       })

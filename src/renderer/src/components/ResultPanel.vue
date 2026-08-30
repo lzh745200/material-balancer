@@ -17,6 +17,10 @@
             </el-dropdown-menu>
           </template>
         </el-dropdown>
+        <el-button size="small" :disabled="!store.activeScheme" @click="reoptimize">
+          重新优化{{ lockedCount ? `（${lockedCount} 件已锁定）` : '' }}
+        </el-button>
+        <el-button v-if="lockedCount" size="small" @click="store.unlockAllUnits()">解锁全部</el-button>
         <el-button size="small" @click="showHistory = true">方案历史（{{ store.schemes.length }}）</el-button>
         <el-button size="small" :disabled="!store.activeScheme" @click="clearScheme">清空当前方案</el-button>
       </div>
@@ -41,6 +45,35 @@
       class="alert"
     />
 
+    <el-card
+      v-if="store.activeScheme && unassignedUnits.length"
+      class="pool"
+      shadow="never"
+      @dragover.prevent
+      @drop.prevent="onDropToPool"
+    >
+      <template #header>
+        <div class="pool-head">
+          <span>未分配池（{{ unassignedUnits.length }} 件）</span>
+          <span class="muted">可拖到下方人员卡片完成分配；把已分配的件拖回这里即取消分配</span>
+        </div>
+      </template>
+      <div class="chips">
+        <el-tag
+          v-for="u in unassignedUnits"
+          :key="u.unitId"
+          size="small"
+          class="chip"
+          type="warning"
+          :title="`${u.name} 单价 ${money(u.price)}`"
+          draggable="true"
+          @dragstart="onPoolDragStart($event, u)"
+        >
+          {{ u.name }} · {{ money(u.price) }}
+        </el-tag>
+      </div>
+    </el-card>
+
     <div class="cards" v-if="store.people.length">
       <PersonCard v-for="p in store.people" :key="p.id" :person="p" />
     </div>
@@ -56,12 +89,14 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown } from '@element-plus/icons-vue'
 import type { AutoStrategy } from '@/algorithms'
+import type { Unit } from '@shared/types'
 import { STRATEGY_LABELS } from '@shared/types'
 import { useProjectStore } from '@/stores/project'
 import { useGenerate } from '@/composables/useGenerate'
+import { formatMoney } from '@/utils/format'
 import StatsSummary from './StatsSummary.vue'
 import PersonCard from './PersonCard.vue'
 import SchemeHistoryDialog from './dialogs/SchemeHistoryDialog.vue'
@@ -79,9 +114,45 @@ const staleText = computed(() =>
     ? `当前方案未覆盖全部物资（${store.unassignedCount} 件未分配或指向已删除的人员/物资），统计与导出可能不准确，建议重新生成。`
     : '当前方案引用了已不存在的物资件（如数量被调小），建议重新生成。'
 )
+const lockedCount = computed(() => store.activeScheme?.lockedUnits?.length ?? 0)
+
+/** 未分配的件（未进入方案，或指向已删除人员） */
+const unassignedUnits = computed<Unit[]>(() =>
+  store.units.filter((u) => {
+    const owner = store.activeAssignment[u.unitId]
+    if (!owner) return true
+    return !store.people.some((p) => p.id === owner)
+  })
+)
+
+const money = (v: number) => formatMoney(v, store.currency)
 
 function onGenerate(strategy: AutoStrategy): void {
   generate(strategy)
+}
+
+function reoptimize(): void {
+  try {
+    store.reoptimizeCurrent()
+  } catch (err) {
+    ElMessage.error((err as Error).message)
+    return
+  }
+  const stats = store.stats
+  if (stats) {
+    ElMessage.success(`已重新优化：最大差值 ${money(stats.diff)}（平均 ${money(stats.avg)}）`)
+  }
+}
+
+function onPoolDragStart(e: DragEvent, unit: Unit): void {
+  e.dataTransfer?.setData('text/plain', unit.unitId)
+  if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
+}
+
+function onDropToPool(e: DragEvent): void {
+  const unitId = e.dataTransfer?.getData('text/plain')
+  if (!unitId) return
+  store.moveUnit(unitId, null)
 }
 
 function clearScheme(): void {
@@ -107,6 +178,37 @@ function clearScheme(): void {
 }
 .alert {
   margin-bottom: 8px;
+}
+.pool {
+  margin-bottom: 8px;
+}
+.pool :deep(.el-card__header) {
+  padding: 6px 12px;
+}
+.pool :deep(.el-card__body) {
+  padding: 8px 12px;
+}
+.pool-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 13px;
+}
+.pool-head .muted {
+  font-weight: 400;
+  font-size: 12px;
+  color: #909399;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-height: 24px;
+}
+.chip {
+  cursor: grab;
 }
 .cards {
   flex: 1;

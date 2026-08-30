@@ -14,6 +14,8 @@ export interface OptimizeOptions {
    * 命中时结果不再保证确定（会输出 console.warn）。
    */
   timeBudgetMs?: number
+  /** 锁定的件：不作为移动 / 交换候选（手动锁定重优化用） */
+  locked?: ReadonlySet<string>
 }
 
 export interface OptimizeResult {
@@ -98,6 +100,7 @@ export function optimizeAssignment(
 
   let ops = 0
   const outOfBudget = (): boolean => ops >= maxOps
+  const locked = options.locked
 
   /** 枚举全部候选操作，返回改进量最大的一个（无改进返回 null） */
   const findBestOp = (): Op | null => {
@@ -109,6 +112,7 @@ export function optimizeAssignment(
     // 单件移动：unit 从其主人移到其他人
     for (const u of units) {
       if (outOfBudget()) break
+      if (locked?.has(u.unitId)) continue
       const owner = work[u.unitId]
       if (!owner || !totalOf.has(owner)) continue
       const ownerTotal = totalOf.get(owner)!
@@ -137,9 +141,11 @@ export function optimizeAssignment(
         const listB = ownedBy.get(pbId)!
         for (const ua of listA) {
           if (outOfBudget()) break swap
+          if (locked?.has(ua)) continue
           const priceA = unitsById.get(ua)!.price
           for (const ub of listB) {
             if (outOfBudget()) break swap
+            if (locked?.has(ub)) continue
             ops++
             const priceB = unitsById.get(ub)!.price
             const gain =
