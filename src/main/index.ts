@@ -1,7 +1,8 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import * as path from 'path'
 import { IPC } from '@shared/types'
 import { registerIpcHandlers } from './services/fileIO'
+import { buildAppMenu } from './menu'
 
 /** 渲染进程上报的「有未保存修改」标志（关窗确认用） */
 let rendererDirty = false
@@ -21,6 +22,7 @@ function createWindow(): BrowserWindow {
     }
   })
   win.on('ready-to-show', () => win.show())
+  buildAppMenu(win)
 
   // 离线工具：禁止打开新窗口与跳转外部页面（保留开发服务器自身加载）
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
@@ -63,8 +65,7 @@ function createWindow(): BrowserWindow {
   return win
 }
 
-// 界面操作全部通过窗口内工具栏完成，隐藏英文默认菜单
-Menu.setApplicationMenu(null)
+// 界面操作通过窗口内工具栏与应用菜单（Ctrl+N/O/S/P）完成
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 if (!gotSingleInstanceLock) {

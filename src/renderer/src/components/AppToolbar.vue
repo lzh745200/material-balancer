@@ -1,17 +1,39 @@
 <template>
   <div class="toolbar">
     <el-button-group>
-      <el-button @click="onNew">新建</el-button>
-      <el-button @click="onOpen">打开</el-button>
-      <el-button @click="onSave">保存</el-button>
-      <el-button @click="onSaveAs">另存为</el-button>
+      <el-button @click="actions.onNew()">新建</el-button>
+      <el-button @click="actions.onOpen()">打开</el-button>
+      <el-button @click="actions.onSave()">保存</el-button>
+      <el-button @click="actions.onSaveAs()">另存为</el-button>
     </el-button-group>
+
+    <el-dropdown trigger="click" @command="onRecent" @visible-change="loadRecents">
+      <el-button>
+        最近打开<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+      </el-button>
+      <template #dropdown>
+        <el-dropdown-menu>
+          <el-dropdown-item v-if="!recents.length" disabled>暂无最近文件</el-dropdown-item>
+          <template v-else>
+            <el-dropdown-item
+              v-for="r in recents"
+              :key="r"
+              :command="r"
+              :title="r"
+            >
+              {{ baseName(r) }}
+            </el-dropdown-item>
+            <el-dropdown-item divided command="__clear__">清空最近列表</el-dropdown-item>
+          </template>
+        </el-dropdown-menu>
+      </template>
+    </el-dropdown>
 
     <el-divider direction="vertical" />
 
     <el-button-group>
-      <el-button @click="onImportMaterials">导入物资</el-button>
-      <el-button @click="onImportPeople">导入人员</el-button>
+      <el-button @click="actions.onImportMaterials()">导入物资</el-button>
+      <el-button @click="actions.onImportPeople()">导入人员</el-button>
     </el-button-group>
 
     <el-divider direction="vertical" />
@@ -42,9 +64,9 @@
     <el-divider direction="vertical" />
 
     <el-button-group>
-      <el-button type="success" @click="onExportPdf">导出 PDF</el-button>
-      <el-button @click="onPrint"><el-icon class="el-icon--left"><Printer /></el-icon>打印</el-button>
-      <el-button @click="onExportCsv">导出 CSV</el-button>
+      <el-button type="success" @click="actions.onExportPdf()">导出 PDF</el-button>
+      <el-button @click="actions.onPrint()"><el-icon class="el-icon--left"><Printer /></el-icon>打印</el-button>
+      <el-button @click="actions.onExportCsv()">导出 CSV</el-button>
     </el-button-group>
 
     <el-divider direction="vertical" />
@@ -57,201 +79,44 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown, Printer, RefreshLeft, RefreshRight } from '@element-plus/icons-vue'
 import type { AutoStrategy } from '@/algorithms'
 import { useProjectStore } from '@/stores/project'
-import { useGenerate } from '@/composables/useGenerate'
-import { buildPersonRows } from '@/print/rows'
-import { buildPrintHtml } from '@/print/buildPrintHtml'
-import { buildDetailCsv } from '@/utils/csvExport'
-import { formatDateTime } from '@/utils/format'
+import { useProjectActions } from '@/composables/useProjectActions'
 import SettingsDialog from './dialogs/SettingsDialog.vue'
 
 const store = useProjectStore()
-const { generate } = useGenerate()
+const actions = useProjectActions()
 const showSettings = ref(false)
 
 const canGenerate = computed(() => store.people.length > 0 && store.materials.length > 0)
 
-const projectJson = () => JSON.stringify(store.exportProject())
+const recents = ref<string[]>([])
 
-function confirmDiscard(message: string): Promise<boolean> {
-  if (!store.dirty) return Promise.resolve(true)
-  return ElMessageBox.confirm(message, '提示', {
-    confirmButtonText: '继续',
-    cancelButtonText: '取消',
-    type: 'warning'
-  })
-    .then(() => true)
-    .catch(() => false)
-}
-
-async function onNew(): Promise<void> {
-  const ok = await confirmDiscard('当前项目尚未保存，新建后将丢失未保存的修改（草稿仍会保留）。确定继续吗？')
-  if (!ok) return
-  store.newProject()
-}
-
-async function onOpen(): Promise<void> {
-  const ok = await confirmDiscard('当前项目尚未保存，打开其他项目将丢失未保存的修改。确定继续吗？')
-  if (!ok) return
-  const res = await window.api.openProject()
-  if (res.canceled) return
-  if (res.error || !res.data) {
-    ElMessage.error(res.error || '打开文件失败')
-    return
-  }
+async function loadRecents(): Promise<void> {
   try {
-    store.loadProject(res.data, res.path ?? null)
-  } catch (err) {
-    ElMessage.error((err as Error).message || '打开文件失败')
-    return
+    const list = await window.api.listRecents()
+    recents.value = list.filter((p) => p !== store.filePath)
+  } catch {
+    recents.value = []
   }
-  ElMessage.success(`已打开：${res.path}`)
 }
 
-async function onSave(): Promise<void> {
-  if (!store.filePath) return onSaveAs()
-  const res = await window.api.saveProjectToPath(store.filePath, projectJson())
-  if (res.error) {
-    ElMessage.error(`保存失败：${res.error}`)
-    return
-  }
-  store.markSaved(res.path ?? store.filePath!)
-  ElMessage.success('已保存')
+function baseName(p: string): string {
+  return p.split(/[\\/]/).pop() || p
 }
 
-async function onSaveAs(): Promise<void> {
-  const res = await window.api.saveProjectAs(projectJson(), `${store.defaultFileName}.mproj`)
-  if (res.canceled) return
-  if (res.error) {
-    ElMessage.error(`保存失败：${res.error}`)
+async function onRecent(command: string): Promise<void> {
+  if (command === '__clear__') {
+    for (const p of recents.value) await window.api.removeRecent(p).catch(() => undefined)
+    recents.value = []
     return
   }
-  store.markSaved(res.path!)
-  ElMessage.success(`已保存到：${res.path}`)
-}
-
-async function onImportMaterials(): Promise<void> {
-  const res = await window.api.importMaterials()
-  if (res.canceled) return
-  if (res.error) {
-    ElMessage.error(`导入失败：${res.error}`)
-    return
-  }
-  if (res.materials.length === 0) {
-    ElMessage.warning('未解析到有效数据。CSV 需要「名称,单价,数量」列（有表头或无表头均可），数量列可省略（默认 1）。')
-    return
-  }
-  const addUnits = res.materials.reduce((acc, m) => acc + Math.max(1, Math.floor(m.quantity || 1)), 0)
-  if (store.wouldExceedUnitLimit(addUnits)) {
-    ElMessage.error(`导入后物资总件数将超过上限（5000），请精简后再导入。`)
-    return
-  }
-  try {
-    store.addImportedMaterials(res.materials)
-  } catch (err) {
-    ElMessage.error((err as Error).message)
-    return
-  }
-  const warnings = res.warnings ?? []
-  ElMessage.success(
-    `已导入 ${res.materials.length} 种物资${res.skipped > 0 ? `，跳过 ${res.skipped} 行无效数据` : ''}`
-  )
-  for (const w of warnings.slice(0, 3)) ElMessage.warning(`解析提示：${w}`)
-}
-
-async function onImportPeople(): Promise<void> {
-  const res = await window.api.importPeople()
-  if (res.canceled) return
-  if (res.error) {
-    ElMessage.error(`导入失败：${res.error}`)
-    return
-  }
-  if (res.names.length === 0) {
-    ElMessage.warning('未解析到有效姓名。请确保文件每行一个姓名。')
-    return
-  }
-  store.addImportedPeople(res.names)
-  ElMessage.success(`已导入 ${res.names.length} 名人员（重复姓名已忽略）`)
+  await actions.onOpenByPath(command)
 }
 
 function onGenerate(strategy: AutoStrategy): void {
-  generate(strategy)
-}
-
-function requireScheme(): boolean {
-  if (!store.activeScheme) {
-    ElMessage.warning('请先点击「生成分配方案」')
-    return false
-  }
-  return true
-}
-
-async function confirmStale(): Promise<boolean> {
-  if (!store.isStale) return true
-  const detail =
-    store.unassignedCount > 0
-      ? `当前方案还有 ${store.unassignedCount} 件物资未分配（或指向已删除的人员/物资），导出内容会小于实际库存。`
-      : '当前方案引用了已不存在的物资件，导出内容可能与当前物资清单不一致。'
-  return ElMessageBox.confirm(`${detail}仍要继续导出吗？`, '提示', {
-    confirmButtonText: '继续导出',
-    cancelButtonText: '取消',
-    type: 'warning'
-  })
-    .then(() => true)
-    .catch(() => false)
-}
-
-function buildHtml(): string {
-  const rows = buildPersonRows(store.people, store.units, store.activeScheme!.assignment)
-  return buildPrintHtml({
-    title: store.title,
-    remark: store.remark,
-    currency: store.currency,
-    rows,
-    generatedAt: formatDateTime(new Date())
-  })
-}
-
-async function onExportPdf(): Promise<void> {
-  if (!requireScheme()) return
-  if (!(await confirmStale())) return
-  const res = await window.api.exportPdf(buildHtml(), `${store.defaultFileName}.pdf`)
-  if (res.canceled) return
-  if (res.error) {
-    ElMessage.error(`导出 PDF 失败：${res.error}`)
-    return
-  }
-  const path = res.path!
-  ElMessageBox.alert(`PDF 已保存到：${path}`, '导出成功', {
-    confirmButtonText: '打开所在文件夹',
-    cancelButtonText: '关闭',
-    distinguishCancelAndClose: true
-  })
-    .then(() => window.api.revealPath(path))
-    .catch(() => undefined)
-}
-
-async function onPrint(): Promise<void> {
-  if (!requireScheme()) return
-  if (!(await confirmStale())) return
-  const res = await window.api.printHtml(buildHtml())
-  if (res?.error) ElMessage.error(`打印失败：${res.error}`)
-}
-
-async function onExportCsv(): Promise<void> {
-  if (!requireScheme()) return
-  if (!(await confirmStale())) return
-  const rows = buildPersonRows(store.people, store.units, store.activeScheme!.assignment)
-  const res = await window.api.exportCsv(buildDetailCsv(rows, store.currency), `${store.defaultFileName}.csv`)
-  if (res.canceled) return
-  if (res.error) {
-    ElMessage.error(`导出 CSV 失败：${res.error}`)
-    return
-  }
-  ElMessage.success(`CSV 已保存到：${res.path}`)
+  actions.generate(strategy)
 }
 </script>
 

@@ -7,6 +7,8 @@ export function useShortcuts(): void {
 
   const onKeyDown = (e: KeyboardEvent) => {
     if (!e.ctrlKey && !e.metaKey) return
+    // 按住不放只触发一次，防止穿透 50 层撤销历史
+    if (e.repeat) return
     const key = e.key.toLowerCase()
     const inEditable = (e.target as HTMLElement | null)?.closest?.('input, textarea')
     if (key === 'z' && !e.shiftKey) {

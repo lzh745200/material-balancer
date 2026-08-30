@@ -14,6 +14,7 @@ import { decodeBuffer, isZipBuffer, parseMaterialsCsv, parseMaterialsXlsx, parse
 import { atomicWriteFileSync } from './atomic'
 import { readDraft, writeDraft } from './draft'
 import { generatePdf, printHtml } from './pdf'
+import { listRecents, pushRecent, removeRecent } from './recents'
 
 const PROJECT_FILTERS = [
   { name: '物资分配项目', extensions: ['mproj', 'json'] },
@@ -45,6 +46,38 @@ function showSaveDialog(e: Electron.IpcMainInvokeEvent, options: Electron.SaveDi
 
 /** xlsx 魔数识别见 parse.ts 的 isZipBuffer */
 
+/** 从磁盘读取项目文件（对话框与按路径打开共用） */
+function openProjectFile(file: string): OpenResult {
+  try {
+    return { canceled: false, path: file, data: readJsonProject(file) }
+  } catch (err) {
+    return { canceled: false, path: file, error: (err as Error).message }
+  }
+}
+
+/** 从磁盘解析物资表（对话框与拖拽导入共用） */
+function importMaterialsFile(file: string): ImportMaterialsResult {
+  try {
+    const buffer = fs.readFileSync(file)
+    const parsed = isZipBuffer(buffer)
+      ? parseMaterialsXlsx(buffer)
+      : parseMaterialsCsv(decodeBuffer(buffer))
+    return { canceled: false, path: file, ...parsed }
+  } catch (err) {
+    return { canceled: false, path: file, materials: [], skipped: 0, error: (err as Error).message }
+  }
+}
+
+/** 从磁盘解析人员名单（对话框与拖拽导入共用） */
+function importPeopleFile(file: string): ImportPeopleResult {
+  try {
+    const names = parsePeople(decodeBuffer(fs.readFileSync(file)))
+    return { canceled: false, path: file, names }
+  } catch (err) {
+    return { canceled: false, path: file, names: [], error: (err as Error).message }
+  }
+}
+
 export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.ProjectOpen, async (e): Promise<OpenResult> => {
     const res = await showOpenDialog(e, {
@@ -53,11 +86,15 @@ export function registerIpcHandlers(): void {
       properties: ['openFile']
     })
     if (res.canceled || res.filePaths.length === 0) return { canceled: true }
-    try {
-      return { canceled: false, path: res.filePaths[0], data: readJsonProject(res.filePaths[0]) }
-    } catch (err) {
-      return { canceled: false, path: res.filePaths[0], error: (err as Error).message }
-    }
+    const result = openProjectFile(res.filePaths[0])
+    if (!result.error) pushRecent(res.filePaths[0])
+    return result
+  })
+
+  ipcMain.handle(IPC.ProjectOpenPath, (_e, file: string): OpenResult => {
+    const result = openProjectFile(file)
+    if (!result.error) pushRecent(file)
+    return result
   })
 
   ipcMain.handle(
@@ -82,6 +119,12 @@ export function registerIpcHandlers(): void {
     IPC.ProjectSaveToPath,
     async (_e, args: { path: string; content: string }): Promise<SaveResult> => {
       try {
+        // 覆盖保存前留一份 .bak，写坏 / 误存时还有上一步可回退
+        try {
+          if (fs.existsSync(args.path)) fs.copyFileSync(args.path, `${args.path}.bak`)
+        } catch {
+          // 备份失败不阻塞保存
+        }
         atomicWriteFileSync(args.path, args.content)
         return { canceled: false, path: args.path }
       } catch (err) {
@@ -101,15 +144,12 @@ export function registerIpcHandlers(): void {
       properties: ['openFile']
     })
     if (res.canceled || res.filePaths.length === 0) return { canceled: true, materials: [], skipped: 0 }
-    const file = res.filePaths[0]
-    try {
-      const buffer = fs.readFileSync(file)
-      const parsed = isZipBuffer(buffer) ? parseMaterialsXlsx(buffer) : parseMaterialsCsv(decodeBuffer(buffer))
-      return { canceled: false, path: file, ...parsed }
-    } catch (err) {
-      return { canceled: false, path: file, materials: [], skipped: 0, error: (err as Error).message }
-    }
+    return importMaterialsFile(res.filePaths[0])
   })
+
+  ipcMain.handle(IPC.ImportMaterialsFile, (_e, file: string): ImportMaterialsResult =>
+    importMaterialsFile(file)
+  )
 
   ipcMain.handle(IPC.ImportPeople, async (e): Promise<ImportPeopleResult> => {
     const res = await showOpenDialog(e, {
@@ -121,13 +161,12 @@ export function registerIpcHandlers(): void {
       properties: ['openFile']
     })
     if (res.canceled || res.filePaths.length === 0) return { canceled: true, names: [] }
-    try {
-      const names = parsePeople(decodeBuffer(fs.readFileSync(res.filePaths[0])))
-      return { canceled: false, path: res.filePaths[0], names }
-    } catch (err) {
-      return { canceled: false, path: res.filePaths[0], names: [], error: (err as Error).message }
-    }
+    return importPeopleFile(res.filePaths[0])
   })
+
+  ipcMain.handle(IPC.ImportPeopleFile, (_e, file: string): ImportPeopleResult =>
+    importPeopleFile(file)
+  )
 
   ipcMain.handle(IPC.DraftSave, (_e, content: string) => writeDraft(content))
 
@@ -188,4 +227,8 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.RevealPath, (_e, p: string) => {
     if (p && fs.existsSync(p)) shell.showItemInFolder(p)
   })
+
+  ipcMain.handle(IPC.RecentsList, () => listRecents())
+
+  ipcMain.handle(IPC.RecentsRemove, (_e, file: string) => removeRecent(file))
 }

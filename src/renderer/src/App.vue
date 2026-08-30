@@ -1,5 +1,5 @@
 <template>
-  <el-container class="app-root">
+  <el-container class="app-root" @dragover.prevent @drop.prevent="onDropFile">
     <el-header height="auto" class="app-header">
       <AppToolbar />
     </el-header>
@@ -15,7 +15,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onBeforeUnmount, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import AppToolbar from './components/AppToolbar.vue'
 import MaterialPanel from './components/MaterialPanel.vue'
@@ -25,10 +25,37 @@ import StatusBar from './components/StatusBar.vue'
 import { useProjectStore } from './stores/project'
 import { useDraftAutosave } from './composables/useDraftAutosave'
 import { useShortcuts } from './composables/useShortcuts'
+import { dispatchMenuAction, useProjectActions } from './composables/useProjectActions'
 
 const store = useProjectStore()
+const actions = useProjectActions()
 useDraftAutosave()
 useShortcuts()
+
+let offMenu: (() => void) | null = null
+onMounted(() => {
+  // 应用菜单 / 快捷键（Ctrl+N/O/S/P）动作分发
+  offMenu = window.api.onMenuAction((action) => dispatchMenuAction(action, actions))
+})
+onBeforeUnmount(() => offMenu?.())
+
+/** 拖拽文件：.mproj/.json 打开项目，表格导入物资，txt 导入人员 */
+async function onDropFile(e: DragEvent): Promise<void> {
+  const file = e.dataTransfer?.files?.[0]
+  if (!file) return
+  const path = window.api.pathForFile(file)
+  if (!path) return
+  const ext = (path.split('.').pop() ?? '').toLowerCase()
+  if (ext === 'mproj' || ext === 'json') {
+    await actions.onOpenByPath(path)
+  } else if (ext === 'csv' || ext === 'xlsx' || ext === 'xls') {
+    await actions.onImportMaterialsByPath(path)
+  } else if (ext === 'txt') {
+    await actions.onImportPeopleByPath(path)
+  } else {
+    ElMessage.warning('支持的文件：.mproj 项目、CSV/XLSX 物资表、txt 人员名单')
+  }
+}
 
 onMounted(async () => {
   try {

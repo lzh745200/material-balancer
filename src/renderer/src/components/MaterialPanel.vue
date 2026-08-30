@@ -2,7 +2,16 @@
   <div class="panel">
     <div class="panel-title">
       物资清单
-      <span class="muted">{{ store.materials.length }} 种 / {{ store.unitCount }} 件 / {{ money(store.totalValue) }}</span>
+      <span class="muted">
+        {{ store.materials.length }} 种 / {{ store.unitCount }} 件 / {{ money(store.totalValue) }}
+      </span>
+      <el-input
+        v-model="keyword"
+        placeholder="搜索物资名称"
+        size="small"
+        clearable
+        class="search"
+      />
     </div>
 
     <div class="add-row">
@@ -37,7 +46,12 @@
     </div>
 
     <div class="table-wrap">
-      <el-table :data="store.materials" size="small" height="100%" empty-text="暂无物资，请在上方添加或使用「导入物资」">
+      <el-table
+        :data="filtered"
+        size="small"
+        height="100%"
+        :empty-text="keyword ? '没有匹配的物资' : '暂无物资，请在上方添加或使用「导入物资」'"
+      >
         <el-table-column type="index" label="序号" width="44" align="center" />
         <el-table-column label="物资名称" min-width="110">
           <template #default="{ row }">
@@ -86,7 +100,7 @@
               <el-button link type="primary" size="small" @click="startEdit(row)">编辑</el-button>
               <el-button link type="danger" size="small" @click="remove(row)">删除</el-button>
               <el-button link size="small" :disabled="$index === 0" @click="store.moveMaterial(row.id, -1)">↑</el-button>
-              <el-button link size="small" :disabled="$index === store.materials.length - 1" @click="store.moveMaterial(row.id, 1)">↓</el-button>
+              <el-button link size="small" :disabled="$index === filtered.length - 1" @click="store.moveMaterial(row.id, 1)">↓</el-button>
             </template>
           </template>
         </el-table-column>
@@ -96,7 +110,7 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { Material } from '@shared/types'
 import { useProjectStore } from '@/stores/project'
@@ -107,6 +121,13 @@ const store = useProjectStore()
 const name = ref('')
 const price = ref<number | undefined>(undefined)
 const quantity = ref(1)
+
+const keyword = ref('')
+const filtered = computed(() => {
+  const k = keyword.value.trim().toLowerCase()
+  if (!k) return store.materials
+  return store.materials.filter((m) => m.name.toLowerCase().includes(k))
+})
 
 const editingId = ref<string | null>(null)
 const draft = reactive({ name: '', price: 1, quantity: 1 })
@@ -173,6 +194,10 @@ function remove(row: Material): void {
 </script>
 
 <style scoped>
+.panel-title .search {
+  width: 160px;
+  margin-left: auto;
+}
 .add-row {
   display: flex;
   gap: 6px;

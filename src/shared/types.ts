@@ -68,6 +68,9 @@ export const MAX_UNITS = 5000
 
 /* ---------------- IPC 结果类型 ---------------- */
 
+/** 应用菜单 / 快捷键动作（主进程菜单 → 渲染进程） */
+export type MenuAction = 'new' | 'open' | 'save' | 'save-as' | 'print' | 'undo' | 'redo'
+
 export interface OpenResult {
   canceled: boolean
   path?: string
@@ -103,16 +106,26 @@ export interface ImportPeopleResult {
 
 export const IPC = {
   ProjectOpen: 'project:open',
+  /** 直接按路径打开（最近文件 / 拖拽打开） */
+  ProjectOpenPath: 'project:open-path',
   ProjectSaveAs: 'project:save-as',
   ProjectSaveToPath: 'project:save-to-path',
   ImportMaterials: 'import:materials',
+  /** 按路径导入物资（拖拽） */
+  ImportMaterialsFile: 'import:materials-file',
   ImportPeople: 'import:people',
+  /** 按路径导入人员（拖拽） */
+  ImportPeopleFile: 'import:people-file',
   DraftSave: 'draft:save',
   /** 关窗兜底：beforeunload 中同步写草稿（invoke 在卸载时可能来不及送达） */
   DraftSaveSync: 'draft:save-sync',
   DraftLoad: 'draft:load',
   /** 渲染进程向主进程同步 dirty 状态（用于关窗确认） */
   ProjectDirtyChanged: 'project:dirty-changed',
+  /** 应用菜单动作 → 渲染进程 */
+  MenuAction: 'menu:action',
+  RecentsList: 'recents:list',
+  RecentsRemove: 'recents:remove',
   ExportPdf: 'export:pdf',
   ExportPrint: 'export:print',
   ExportCsv: 'export:csv',
@@ -124,14 +137,20 @@ export const IPC = {
 export interface Api {
   /** 弹出打开对话框并读取项目文件 */
   openProject(): Promise<OpenResult>
+  /** 按路径打开项目文件（最近文件 / 拖拽），不弹对话框 */
+  openProjectByPath(path: string): Promise<OpenResult>
   /** 弹出另存为对话框并写入 */
   saveProjectAs(content: string, defaultName: string): Promise<SaveResult>
   /** 静默保存到已知路径 */
   saveProjectToPath(path: string, content: string): Promise<SaveResult>
   /** 弹出对话框导入物资（CSV / XLSX） */
   importMaterials(): Promise<ImportMaterialsResult>
+  /** 按路径导入物资（拖拽），不弹对话框 */
+  importMaterialsFromPath(path: string): Promise<ImportMaterialsResult>
   /** 弹出对话框导入人员（txt / CSV，每行一个姓名） */
   importPeople(): Promise<ImportPeopleResult>
+  /** 按路径导入人员（拖拽），不弹对话框 */
+  importPeopleFromPath(path: string): Promise<ImportPeopleResult>
   /** 保存草稿（content 为空字符串时删除草稿）；写失败时 ok=false 并带 error */
   saveDraft(content: string): Promise<{ ok: boolean; error?: string }>
   /** 关窗时的同步兜底保存（阻塞渲染进程直到主进程写完） */
@@ -148,4 +167,12 @@ export interface Api {
   exportCsv(content: string, defaultName: string): Promise<SaveResult>
   /** 在文件管理器中显示文件 */
   revealPath(path: string): Promise<void>
+  /** 最近打开的项目文件列表（最新的在前，最多 10 条） */
+  listRecents(): Promise<string[]>
+  /** 从最近列表移除一条 */
+  removeRecent(path: string): Promise<void>
+  /** 订阅应用菜单 / 快捷键动作，返回取消订阅函数 */
+  onMenuAction(callback: (action: MenuAction) => void): () => void
+  /** 拖拽文件的磁盘路径（Electron ≥32 渲染层 File.path 已移除，由 preload 用 webUtils 解析） */
+  pathForFile(file: File): string
 }
