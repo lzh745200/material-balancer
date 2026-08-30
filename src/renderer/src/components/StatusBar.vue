@@ -7,6 +7,7 @@
     <span v-if="store.draftSavedAt" class="draft">草稿已自动保存 {{ store.draftSavedAt }}</span>
     <span class="spacer" />
     <span>物资 {{ store.materials.length }} 种 / {{ store.unitCount }} 件</span>
+    <span v-if="store.unitTruncated" class="warn-text">⚠ 件数超上限，分配与统计已按 {{ store.units.length }} 件截断</span>
     <el-divider direction="vertical" />
     <span>总价值 {{ money(store.totalValue) }}</span>
     <el-divider direction="vertical" />
@@ -17,6 +18,10 @@
         当前方案最大差值
         <b :class="{ warn: store.overDiffWarning }">{{ money(store.stats.diff) }}</b>
       </span>
+      <template v-if="store.unassignedCount > 0">
+        <el-divider direction="vertical" />
+        <span class="warn-text">未分配 {{ store.unassignedCount }} 件</span>
+      </template>
     </template>
   </div>
 </template>
@@ -58,6 +63,9 @@ const money = (v: number) => formatMoney(v, store.currency)
   flex: 1;
 }
 b.warn {
+  color: #e6a23c;
+}
+.warn-text {
   color: #e6a23c;
 }
 </style>

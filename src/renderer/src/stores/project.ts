@@ -7,13 +7,16 @@ import type {
   Unit
 } from '@shared/types'
 import { MAX_UNITS } from '@shared/types'
+import { validateProject, DEFAULT_TITLE } from '@shared/validate'
 import { distribute, computeStats, expandUnits, type AutoStrategy, type GlobalStats } from '@/algorithms'
 import { uid } from '@/utils/id'
-import { round2 } from '@/utils/format'
+import { formatDate, round2 } from '@/utils/format'
+
+// 供既有组件从 store 模块导入默认标题
+export { DEFAULT_TITLE }
 
 const HISTORY_LIMIT = 50
 const SCHEME_LIMIT = 30
-export const DEFAULT_TITLE = '物资分配领取表'
 
 interface Snapshot {
   title: string
@@ -37,6 +40,16 @@ function emptySnapshot(): Snapshot {
   }
 }
 
+/** 数量归一化：取整且至少 1（与 expandUnits / shared/validate 一致） */
+function normalizeQuantity(quantity: unknown): number {
+  const n = Math.floor(Number(quantity))
+  return Number.isFinite(n) && n >= 1 ? n : 1
+}
+
+function unitsOfMaterial(m: Material): number {
+  return normalizeQuantity(m.quantity)
+}
+
 /**
  * 深拷贝纯 JSON 数据模型。
  * 注意不能用 structuredClone：入参是 Vue 响应式 Proxy，会抛 DataCloneError。
@@ -48,6 +61,9 @@ function deepClone<T>(value: T): T {
 /**
  * 项目主 store：物资 + 人员 + 分配方案 + 文件状态 + 撤销重做。
  * 一切可撤销的修改都先调用 pushHistory() 记录快照。
+ *
+ * 校验约定：add/update 系 action 对非法输入抛 Error（调用方负责提示），
+ * pushHistory 一定在校验通过之后调用，失败时不产生任何状态变化。
  */
 export const useProjectStore = defineStore('project', {
   state: () => ({
@@ -65,15 +81,23 @@ export const useProjectStore = defineStore('project', {
       try {
         return expandUnits(state.materials)
       } catch {
-        // 超过拆分上限时仍给 UI 提供部分可用数据
+        // 超过拆分上限时按顺序截断到上限，unitTruncated 供 UI 警告
         const units: Unit[] = []
+        let total = 0
         for (const m of state.materials) {
-          for (let k = 1; k <= Math.min(Math.max(1, Math.floor(m.quantity || 1)), 50); k++) {
+          for (let k = 1; k <= unitsOfMaterial(m); k++) {
+            if (total >= MAX_UNITS) return units
+            total++
             units.push({ unitId: `${m.id}#${k}`, materialId: m.id, name: m.name, price: m.price })
           }
         }
         return units
       }
+    },
+
+    /** 物资总件数是否超过拆分上限（units 将被截断展示，正常编辑守卫下不应出现） */
+    unitTruncated(state): boolean {
+      return state.materials.reduce((acc, m) => acc + unitsOfMaterial(m), 0) > MAX_UNITS
     },
 
     unitMap(): Map<string, Unit> {
@@ -100,12 +124,32 @@ export const useProjectStore = defineStore('project', {
       return computeStats(this.activeAssignment, this.units, state.people.map((p) => p.id))
     },
 
-    /** 物资 / 人员变动后，激活方案是否已失效（引用了不存在的件或人员） */
+    /** 当前方案未覆盖到的件数（未分配 或 指向已删除人员） */
+    unassignedCount(state): number {
+      const scheme = this.activeScheme
+      if (!scheme) return 0
+      const personIds = new Set(state.people.map((p) => p.id))
+      return this.units.filter((u) => {
+        const owner = scheme.assignment[u.unitId]
+        return !owner || !personIds.has(owner)
+      }).length
+    },
+
+    /**
+     * 方案是否已失效：
+     * 1) 引用了不存在的件或人员（删物资 / 删人 / 数量减少）；
+     * 2) 没有覆盖全部现有件（数量调大后新件未进入方案）。
+     * 任一情况都会导致统计与打印与实际库存不一致。
+     */
     isStale(state): boolean {
       const scheme = this.activeScheme
       if (!scheme) return false
       const map = this.unitMap
       const personIds = new Set(state.people.map((p) => p.id))
+      for (const u of this.units) {
+        const owner = scheme.assignment[u.unitId]
+        if (!owner || !personIds.has(owner)) return true
+      }
       return Object.entries(scheme.assignment).some(
         ([unitId, personId]) => !map.has(unitId) || !personIds.has(personId)
       )
@@ -120,11 +164,11 @@ export const useProjectStore = defineStore('project', {
     },
 
     totalValue(state): number {
-      return round2(state.materials.reduce((acc, m) => acc + m.price * Math.max(1, m.quantity), 0))
+      return round2(state.materials.reduce((acc, m) => acc + m.price * unitsOfMaterial(m), 0))
     },
 
     unitCount(state): number {
-      return state.materials.reduce((acc, m) => acc + Math.max(1, Math.floor(m.quantity || 1)), 0)
+      return state.materials.reduce((acc, m) => acc + unitsOfMaterial(m), 0)
     },
 
     canUndo(state): boolean {
@@ -136,8 +180,8 @@ export const useProjectStore = defineStore('project', {
     },
 
     defaultFileName(state): string {
-      const safe = state.title.replace(/[\\/:*?"<>|]/g, '') || '物资分配领取表'
-      return `${safe}-${new Date().toISOString().slice(0, 10)}`
+      const safe = state.title.replace(/[\\/:*?"<>|]/g, '') || DEFAULT_TITLE
+      return `${safe}-${formatDate()}`
     }
   },
 
@@ -171,6 +215,10 @@ export const useProjectStore = defineStore('project', {
       this.people = s.people
       this.schemes = s.schemes
       this.activeSchemeId = s.activeSchemeId
+      // 撤销可能回退到方案上限驱逐前的快照，activeSchemeId 或已悬空
+      if (this.activeSchemeId && !this.schemes.some((x) => x.id === this.activeSchemeId)) {
+        this.activeSchemeId = this.schemes.length ? this.schemes[this.schemes.length - 1].id : null
+      }
     },
 
     undo(): void {
@@ -205,23 +253,30 @@ export const useProjectStore = defineStore('project', {
     },
 
     newProject(): void {
-      Object.assign(this, emptySnapshot(), { past: [], future: [] })
+      Object.assign(this, emptySnapshot(), { past: [], future: [], draftSavedAt: '' })
       this.filePath = null
       this.dirty = false
     },
 
-    loadProject(data: ProjectFile, filePath: string | null): void {
-      this.title = data.title
-      this.remark = data.remark
-      this.currency = data.currency
-      this.materials = data.materials
-      this.people = data.people
-      this.schemes = data.schemes
-      this.activeSchemeId = data.activeSchemeId
+    /**
+     * 加载项目数据。接受 unknown：打开文件 / 恢复草稿的数据一律先经
+     * validateProject 归一化，畸形数据不会进入状态（引用 undefined 崩溃）。
+     */
+    loadProject(data: unknown, filePath: string | null): void {
+      const project = validateProject(data)
+      if (!project) throw new Error('项目数据无效')
+      this.title = project.title
+      this.remark = project.remark
+      this.currency = project.currency
+      this.materials = project.materials
+      this.people = project.people
+      this.schemes = project.schemes
+      this.activeSchemeId = project.activeSchemeId
       this.filePath = filePath
       this.past = []
       this.future = []
       this.dirty = false
+      this.draftSavedAt = ''
     },
 
     markSaved(filePath: string): void {
@@ -232,17 +287,42 @@ export const useProjectStore = defineStore('project', {
     /* ---------- 物资 ---------- */
 
     addMaterial(name: string, price: number, quantity: number): void {
+      const trimmed = name.trim()
+      if (!trimmed) throw new Error('物资名称不能为空')
+      const p = round2(Number(price))
+      if (!Number.isFinite(p) || p <= 0) throw new Error('单价必须为大于 0 的数字')
+      const q = normalizeQuantity(quantity)
+      if (this.wouldExceedUnitLimit(q)) {
+        throw new Error(`物资总件数将超过上限（${MAX_UNITS}），请减少数量`)
+      }
       this.pushHistory()
-      this.materials.push({ id: uid('m'), name: name.trim(), price: round2(price), quantity })
+      this.materials.push({ id: uid('m'), name: trimmed, price: p, quantity: q })
     },
 
     updateMaterial(id: string, patch: Partial<Omit<Material, 'id'>>): void {
       const m = this.materials.find((x) => x.id === id)
       if (!m) return
+      if (patch.price !== undefined) {
+        const p = round2(Number(patch.price))
+        if (!Number.isFinite(p) || p <= 0) throw new Error('单价必须为大于 0 的数字')
+      }
+      let nextQty = m.quantity
+      if (patch.quantity !== undefined) {
+        const q = Math.floor(Number(patch.quantity))
+        if (!Number.isFinite(q) || q < 1) throw new Error('数量必须为不小于 1 的整数')
+        const others = this.materials.reduce(
+          (acc, x) => (x.id === id ? acc : acc + unitsOfMaterial(x)),
+          0
+        )
+        if (others + q > MAX_UNITS) {
+          throw new Error(`物资总件数将超过上限（${MAX_UNITS}），请减小数量`)
+        }
+        nextQty = q
+      }
       this.pushHistory()
-      Object.assign(m, patch)
-      if (m.quantity < 1) m.quantity = 1
-      m.price = round2(m.price)
+      if (patch.name !== undefined && patch.name.trim()) m.name = patch.name.trim()
+      if (patch.price !== undefined) m.price = round2(Number(patch.price))
+      m.quantity = nextQty
     },
 
     removeMaterial(id: string): void {
@@ -262,6 +342,10 @@ export const useProjectStore = defineStore('project', {
 
     addImportedMaterials(list: Material[]): void {
       if (!list.length) return
+      const add = list.reduce((acc, m) => acc + unitsOfMaterial(m), 0)
+      if (this.wouldExceedUnitLimit(add)) {
+        throw new Error(`导入后物资总件数将超过上限（${MAX_UNITS}），请精简后再导入`)
+      }
       this.pushHistory()
       this.materials.push(...list)
     },
@@ -270,16 +354,24 @@ export const useProjectStore = defineStore('project', {
 
     addPerson(name: string): void {
       const trimmed = name.trim()
-      if (!trimmed) return
+      if (!trimmed) throw new Error('姓名不能为空')
+      if (this.people.some((p) => p.name === trimmed)) {
+        throw new Error(`已有同名人员「${trimmed}」`)
+      }
+      if (this.people.length >= 200) throw new Error('人员数量已达上限（200 人）')
       this.pushHistory()
       this.people.push({ id: uid('p'), name: trimmed })
     },
 
     renamePerson(id: string, name: string): void {
       const p = this.people.find((x) => x.id === id)
-      if (!p || !name.trim()) return
+      const trimmed = name.trim()
+      if (!p || !trimmed) throw new Error('姓名不能为空')
+      if (this.people.some((x) => x.id !== id && x.name === trimmed)) {
+        throw new Error(`已有同名人员「${trimmed}」`)
+      }
       this.pushHistory()
-      p.name = name.trim()
+      p.name = trimmed
     },
 
     removePerson(id: string): void {
@@ -315,11 +407,15 @@ export const useProjectStore = defineStore('project', {
       // 先计算再入历史：抛异常时不产生任何状态变化
       const result = distribute(this.materials, this.people, strategy)
       this.pushHistory()
-      const now = new Date()
+      // 编号取现有最大编号 + 1，删除中间方案后不会重名
+      const maxNum = this.schemes.reduce((acc, s) => {
+        const match = /^方案(\d+)$/.exec(s.name)
+        return match ? Math.max(acc, Number(match[1])) : acc
+      }, 0)
       const scheme: AllocationScheme = {
         id: uid('s'),
-        name: `方案${this.schemes.length + 1}`,
-        createdAt: now.toISOString(),
+        name: `方案${maxNum + 1}`,
+        createdAt: new Date().toISOString(),
         strategy,
         assignment: result.assignment
       }
@@ -328,13 +424,25 @@ export const useProjectStore = defineStore('project', {
       this.activeSchemeId = scheme.id
     },
 
-    /** 手动调整：把一件物资移动到另一人（仅作用于当前激活方案） */
-    moveUnit(unitId: string, toPersonId: string): void {
+    /**
+     * 手动调整：把一件物资移动到另一人；toPersonId 传 null 表示移出分配（未分配池）。
+     * unitId 必须是当前存在的拆分件，防止幽灵引用在方案里继续存活。
+     */
+    moveUnit(unitId: string, toPersonId: string | null): void {
       const scheme = this.activeScheme
-      if (!scheme || !unitId || !toPersonId) return
+      if (!scheme || !unitId) return
+      if (!(unitId in scheme.assignment)) return
+      if (toPersonId === null) {
+        this.pushHistory()
+        delete scheme.assignment[unitId]
+        if (scheme.strategy !== 'manual') scheme.strategy = 'manual'
+        return
+      }
+      if (!toPersonId) return
+      if (!this.unitMap.has(unitId)) return
+      if (!this.people.some((p) => p.id === toPersonId)) return
       const from = scheme.assignment[unitId]
       if (!from || from === toPersonId) return
-      if (!this.people.some((p) => p.id === toPersonId)) return
       this.pushHistory()
       scheme.assignment[unitId] = toPersonId
       if (scheme.strategy !== 'manual') scheme.strategy = 'manual'
@@ -384,9 +492,7 @@ export const useProjectStore = defineStore('project', {
 
     /** 当前物资拆分后总件数是否超过上限（用于导入前提示） */
     wouldExceedUnitLimit(addCount = 0): boolean {
-      const total =
-        this.materials.reduce((acc, m) => acc + Math.max(1, Math.floor(m.quantity || 1)), 0) +
-        addCount
+      const total = this.unitCount + addCount
       return total > MAX_UNITS
     }
   }

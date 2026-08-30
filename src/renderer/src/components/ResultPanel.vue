@@ -29,7 +29,7 @@
       type="warning"
       :closable="false"
       show-icon
-      title="物资或人员在生成方案后发生了变化，当前方案可能已不准确，建议重新生成。"
+      :title="staleText"
       class="alert"
     />
     <el-alert
@@ -56,45 +56,32 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessageBox } from 'element-plus'
 import { ArrowDown } from '@element-plus/icons-vue'
 import type { AutoStrategy } from '@/algorithms'
 import { STRATEGY_LABELS } from '@shared/types'
 import { useProjectStore } from '@/stores/project'
-import { formatMoney } from '@/utils/format'
+import { useGenerate } from '@/composables/useGenerate'
 import StatsSummary from './StatsSummary.vue'
 import PersonCard from './PersonCard.vue'
 import SchemeHistoryDialog from './dialogs/SchemeHistoryDialog.vue'
 
 const store = useProjectStore()
+const { generate } = useGenerate()
 const showHistory = ref(false)
 
 const canGenerate = computed(() => store.people.length > 0 && store.materials.length > 0)
 const strategyLabel = computed(() =>
   store.activeScheme ? `当前：${store.activeScheme.name} · ${STRATEGY_LABELS[store.activeScheme.strategy]}` : ''
 )
+const staleText = computed(() =>
+  store.unassignedCount > 0
+    ? `当前方案未覆盖全部物资（${store.unassignedCount} 件未分配或指向已删除的人员/物资），统计与导出可能不准确，建议重新生成。`
+    : '当前方案引用了已不存在的物资件（如数量被调小），建议重新生成。'
+)
 
-async function onGenerate(strategy: AutoStrategy): Promise<void> {
-  try {
-    store.generateAllocation(strategy)
-  } catch (err) {
-    ElMessage.error((err as Error).message)
-    return
-  }
-  const stats = store.stats
-  if (stats) {
-    ElMessage.success(
-      `方案已生成：最大差值 ${formatMoney(stats.diff, store.currency)}（平均 ${formatMoney(stats.avg, store.currency)}）`
-    )
-  }
-  if (store.overDiffWarning) {
-    ElMessageBox.alert(
-      '当前方案的价值差仍超过平均价值的 10%。可能原因：某件物资价值远高于人均水平，物理上无法进一步均衡；' +
-        '可尝试改用「贪心 + 优化」策略，或直接拖拽物资手动调整。',
-      '建议调整',
-      { confirmButtonText: '知道了', type: 'warning' }
-    ).catch(() => undefined)
-  }
+function onGenerate(strategy: AutoStrategy): void {
+  generate(strategy)
 }
 
 function clearScheme(): void {

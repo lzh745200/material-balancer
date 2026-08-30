@@ -1,6 +1,10 @@
-import { app, BrowserWindow, Menu } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu } from 'electron'
 import * as path from 'path'
+import { IPC } from '@shared/types'
 import { registerIpcHandlers } from './services/fileIO'
+
+/** 渲染进程上报的「有未保存修改」标志（关窗确认用） */
+let rendererDirty = false
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -18,6 +22,39 @@ function createWindow(): BrowserWindow {
   })
   win.on('ready-to-show', () => win.show())
 
+  // 离线工具：禁止打开新窗口与跳转外部页面（保留开发服务器自身加载）
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  const devUrl = process.env.ELECTRON_RENDERER_URL
+  win.webContents.on('will-navigate', (e, url) => {
+    const allowed = devUrl ? url.startsWith(devUrl) : url.startsWith('file:')
+    if (!allowed) e.preventDefault()
+  })
+
+  // 未保存时弹确认；确认退出后走正常 close 流程，
+  // 渲染层 beforeunload 的同步草稿兜底会在此期间完成写入
+  let forceClose = false
+  win.on('close', (e) => {
+    if (forceClose || !rendererDirty) return
+    e.preventDefault()
+    const choice = dialog.showMessageBoxSync(win, {
+      type: 'warning',
+      title: '未保存的修改',
+      message: '当前项目有未保存的修改。',
+      detail: '退出前会自动保留一份本地草稿，下次打开可恢复；也可以先取消并手动保存。',
+      buttons: ['退出并保留草稿', '取消'],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true
+    })
+    if (choice === 0) {
+      forceClose = true
+      win.close()
+    }
+  })
+  win.webContents.on('did-finish-load', () => {
+    rendererDirty = false
+  })
+
   if (process.env.ELECTRON_RENDERER_URL) {
     win.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
@@ -33,6 +70,10 @@ const gotSingleInstanceLock = app.requestSingleInstanceLock()
 if (!gotSingleInstanceLock) {
   app.quit()
 } else {
+  ipcMain.on(IPC.ProjectDirtyChanged, (_e, dirty: unknown) => {
+    rendererDirty = dirty === true
+  })
+
   app.on('second-instance', () => {
     const [win] = BrowserWindow.getAllWindows()
     if (win) {

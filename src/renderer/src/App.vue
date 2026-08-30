@@ -34,10 +34,13 @@ onMounted(async () => {
   try {
     const draft = await window.api.loadDraft()
     if (!draft) return
-    const parsed = JSON.parse(draft) as {
-      version?: number
-      materials?: unknown[]
-      people?: unknown[]
+    let parsed: { version?: number; materials?: unknown[]; people?: unknown[] }
+    try {
+      parsed = JSON.parse(draft)
+    } catch {
+      // 主进程已会清理损坏草稿，这里兜底提示一次
+      ElMessage.warning('本地草稿已损坏，无法恢复')
+      return
     }
     if (parsed?.version !== 1 || !Array.isArray(parsed.materials)) return
     const hasContent = parsed.materials.length > 0 || (parsed.people?.length ?? 0) > 0
@@ -57,14 +60,19 @@ onMounted(async () => {
       .catch((action: string) => (action === 'cancel' ? 'discard' as const : 'keep' as const))
 
     if (action === 'restore') {
-      store.loadProject(parsed as never, null)
+      try {
+        store.loadProject(parsed as never, null)
+      } catch (err) {
+        ElMessage.warning(`草稿恢复失败：${(err as Error).message || '数据无效'}`)
+        return
+      }
       store.dirty = true
       ElMessage.success('已恢复上次草稿')
     } else if (action === 'discard') {
       await window.api.saveDraft('')
     }
   } catch {
-    // 草稿恢复失败不阻塞启动
+    // 草稿恢复流程失败不阻塞启动
   }
 })
 </script>

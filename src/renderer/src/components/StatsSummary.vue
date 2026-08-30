@@ -18,7 +18,11 @@
     </div>
     <div class="stat">
       <label>标准差</label>
-      <b>{{ formatNumber(stats.std) }}</b>
+      <b>{{ money(stats.std) }}</b>
+    </div>
+    <div v-if="stats.unassignedCount > 0" class="stat">
+      <label>未分配件数</label>
+      <b class="warn">{{ stats.unassignedCount }}</b>
     </div>
   </div>
 </template>
@@ -27,7 +31,7 @@
 import { computed } from 'vue'
 import type { GlobalStats } from '@/algorithms'
 import { useProjectStore } from '@/stores/project'
-import { formatMoney, formatNumber } from '@/utils/format'
+import { formatMoney } from '@/utils/format'
 
 const props = defineProps<{ stats: GlobalStats }>()
 

@@ -59,8 +59,10 @@ function onDragStart(e: DragEvent, unit: Unit): void {
 
 function onDragOver(e: DragEvent): void {
   if (!store.activeScheme) return
+  // 只有拖拽的是本应用的物资件（text/plain）才高亮，文件 / 文本拖入不响应
+  if (!e.dataTransfer?.types.includes('text/plain')) return
   dragOver.value = true
-  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+  e.dataTransfer.dropEffect = 'move'
 }
 
 function onDrop(e: DragEvent): void {

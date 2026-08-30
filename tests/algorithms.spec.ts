@@ -42,6 +42,18 @@ describe('expandUnits 物资拆分', () => {
     const materials: Material[] = [{ id: 'a', name: '沙子', price: 0.1, quantity: MAX_UNITS + 1 }]
     expect(() => expandUnits(materials)).toThrow(/超过上限/)
   })
+
+  it('数量 0 / 负数 / 小数 / NaN 一律归一化为至少 1 件', () => {
+    const materials: Material[] = [
+      { id: 'a', name: '零', price: 1, quantity: 0 },
+      { id: 'b', name: '负', price: 1, quantity: -3 },
+      { id: 'c', name: '小数', price: 1, quantity: 2.5 },
+      { id: 'd', name: '非数', price: 1, quantity: Number.NaN }
+    ]
+    const units = expandUnits(materials)
+    // 0/负/NaN → 1 件；2.5 → 向下取整 2 件
+    expect(units.map((u) => u.unitId)).toEqual(['a#1', 'b#1', 'c#1', 'c#2', 'd#1'])
+  })
 })
 
 describe('greedyAssign 贪心 LPT', () => {
@@ -56,6 +68,20 @@ describe('greedyAssign 贪心 LPT', () => {
     expect(greedyAssign([], [])).toEqual({})
     const units = expandUnits(mkMaterials([1, 2]))
     expect(greedyAssign(units, [])).toEqual({})
+  })
+
+  it('同价物资按名称、unitId 稳定排序（并列决胜）', () => {
+    const units: Unit[] = [
+      { unitId: 'b#1', materialId: 'b', name: '钢笔', price: 5 },
+      { unitId: 'a#2', materialId: 'a', name: '笔记本', price: 5 },
+      { unitId: 'a#1', materialId: 'a', name: '笔记本', price: 5 }
+    ]
+    const ids = ['p1', 'p2', 'p3']
+    const assignment = greedyAssign(units, ids)
+    // 同价 5：笔记本(a#1) → p1、笔记本(a#2) → p2、钢笔(b#1) → p3
+    expect(assignment).toEqual({ 'a#1': 'p1', 'a#2': 'p2', 'b#1': 'p3' })
+    // 两次运行顺序一致
+    expect(greedyAssign([...units].reverse(), ids)).toEqual(assignment)
   })
 })
 
@@ -79,6 +105,29 @@ describe('optimizeAssignment 局部优化', () => {
     const opt = optimizeAssignment(greedy, units, ids)
     expect(opt.improved).toBe(false)
     expect(opt.assignment).toEqual(greedy)
+  })
+
+  it('指向已删除人员的脏输入被忽略，不影响优化', () => {
+    const units = expandUnits(mkMaterials([3, 3, 2, 2, 2]))
+    const ids = mkPeople(2).map((p) => p.id)
+    const dirty: Record<string, string> = { 'm1#1': 'ghost', 'm2#1': ids[0] }
+    const opt = optimizeAssignment(dirty, units, ids)
+    // ghost 指向的件被忽略，其余仍可优化且不抛异常
+    expect(opt.assignment['m1#1']).toBe('ghost')
+    for (const [unitId, personId] of Object.entries(opt.assignment)) {
+      if (personId !== 'ghost') expect(ids).toContain(personId)
+    }
+  })
+
+  it('500 件规模下两次运行结果完全一致（确定性预算）', () => {
+    const rng = mulberry32(7)
+    const materials = mkMaterials(Array.from({ length: 500 }, () => Math.floor(rng() * 1000) + 1))
+    const units = expandUnits(materials)
+    const ids = mkPeople(50).map((p) => p.id)
+    const greedy = greedyAssign(units, ids)
+    const a = optimizeAssignment(greedy, units, ids).assignment
+    const b = optimizeAssignment(greedy, units, ids).assignment
+    expect(a).toEqual(b)
   })
 })
 
@@ -120,6 +169,23 @@ describe('computeStats 统计', () => {
     const stats = computeStats({ 'm1#1': 'ghost' }, units, ['p1'])
     expect(stats.totals).toEqual([{ personId: 'p1', total: 0, count: 0 }])
     expect(stats.diff).toBe(0)
+  })
+
+  it('统计未分配件数与覆盖率', () => {
+    const units = expandUnits(mkMaterials([5, 4, 3]))
+    const ids = mkPeople(2).map((p) => p.id)
+    // m3 未分配
+    const stats = computeStats({ 'm1#1': 'p1', 'm2#1': 'p2' }, units, ids)
+    expect(stats.unassignedCount).toBe(1)
+    expect(stats.coverage).toBeCloseTo(2 / 3)
+    // 全部分配
+    const full = computeStats({ 'm1#1': 'p1', 'm2#1': 'p2', 'm3#1': 'p1' }, units, ids)
+    expect(full.unassignedCount).toBe(0)
+    expect(full.coverage).toBe(1)
+    // 指向已删除人员的件也算未分配
+    const ghost = computeStats({ 'm1#1': 'p1', 'm2#1': 'ghost', 'm3#1': 'ghost' }, units, ids)
+    expect(ghost.unassignedCount).toBe(2)
+    expect(ghost.coverage).toBeCloseTo(1 / 3)
   })
 })
 

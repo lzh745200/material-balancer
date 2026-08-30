@@ -87,6 +87,8 @@ export interface ImportMaterialsResult {
   materials: Material[]
   /** 因名称为空 / 价格非法被跳过的行数 */
   skipped: number
+  /** 解析器报告的问题（如 CSV 引号格式错误），用于向用户提示 */
+  warnings?: string[]
   error?: string
 }
 
@@ -106,7 +108,11 @@ export const IPC = {
   ImportMaterials: 'import:materials',
   ImportPeople: 'import:people',
   DraftSave: 'draft:save',
+  /** 关窗兜底：beforeunload 中同步写草稿（invoke 在卸载时可能来不及送达） */
+  DraftSaveSync: 'draft:save-sync',
   DraftLoad: 'draft:load',
+  /** 渲染进程向主进程同步 dirty 状态（用于关窗确认） */
+  ProjectDirtyChanged: 'project:dirty-changed',
   ExportPdf: 'export:pdf',
   ExportPrint: 'export:print',
   ExportCsv: 'export:csv',
@@ -126,8 +132,12 @@ export interface Api {
   importMaterials(): Promise<ImportMaterialsResult>
   /** 弹出对话框导入人员（txt / CSV，每行一个姓名） */
   importPeople(): Promise<ImportPeopleResult>
-  /** 保存草稿（content 为空字符串时删除草稿） */
-  saveDraft(content: string): Promise<void>
+  /** 保存草稿（content 为空字符串时删除草稿）；写失败时 ok=false 并带 error */
+  saveDraft(content: string): Promise<{ ok: boolean; error?: string }>
+  /** 关窗时的同步兜底保存（阻塞渲染进程直到主进程写完） */
+  saveDraftSync(content: string): void
+  /** 向主进程同步当前未保存标志（用于关窗确认） */
+  notifyDirty(dirty: boolean): void
   /** 读取草稿，无草稿返回 null */
   loadDraft(): Promise<string | null>
   /** 生成 PDF 并保存，返回保存路径 */

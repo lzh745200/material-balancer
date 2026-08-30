@@ -61,11 +61,12 @@ function add(): void {
     ElMessage.warning('请填写姓名')
     return
   }
-  if (store.people.length >= 200) {
-    ElMessage.error('人员数量已达上限（200 人）')
+  try {
+    store.addPerson(trimmed)
+  } catch (err) {
+    ElMessage.error((err as Error).message)
     return
   }
-  store.addPerson(trimmed)
   name.value = ''
 }
 
@@ -83,7 +84,12 @@ function saveEdit(row: Person): void {
     ElMessage.warning('姓名不能为空')
     return
   }
-  store.renamePerson(row.id, draftName.value)
+  try {
+    store.renamePerson(row.id, draftName.value)
+  } catch (err) {
+    ElMessage.error((err as Error).message)
+    return
+  }
   editingId.value = null
 }
 </script>

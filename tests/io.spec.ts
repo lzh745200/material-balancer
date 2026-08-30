@@ -3,10 +3,13 @@ import * as XLSX from 'xlsx'
 import * as iconv from 'iconv-lite'
 import {
   decodeBuffer,
+  isZipBuffer,
+  parseMaterialRows,
   parseMaterialsCsv,
   parseMaterialsXlsx,
   parsePeople
 } from '../src/main/services/parse'
+import { validateProject } from '../src/shared/validate'
 import { buildPersonRows } from '../src/renderer/src/print/rows'
 import { buildPrintHtml } from '../src/renderer/src/print/buildPrintHtml'
 import { buildDetailCsv } from '../src/renderer/src/utils/csvExport'
@@ -47,6 +50,25 @@ describe('parseMaterialsCsv', () => {
     const { materials } = parseMaterialsCsv('名称,单价,数量\n本子,2,0\n笔,3,x')
     expect(materials.map((m) => m.quantity)).toEqual([1, 1])
   })
+
+  it('全角数字与全角逗号也能解析（中文输入法常见）', () => {
+    const { materials, skipped } = parseMaterialsCsv('名称,单价,数量\n笔记本，Ａ４,１２.５,２')
+    expect(skipped).toBe(0)
+    expect(materials[0]).toMatchObject({ name: '笔记本，Ａ４', price: 12.5, quantity: 2 })
+  })
+
+  it('单价列优先于金额列（金额是总额含义）', () => {
+    const { materials } = parseMaterialsCsv('名称,金额,单价\n本子,100,5')
+    expect(materials[0].price).toBe(5)
+  })
+
+  it('无关键词表头时首行计入 skipped，不静默丢弃', () => {
+    // 首行名称非空但价格不可解析，且无任何表头关键词 → 疑似表头，计入 skipped
+    const { materials, skipped } = parseMaterialsCsv('好本子,,1\n好笔子,3,1')
+    expect(materials).toHaveLength(1)
+    expect(materials[0]).toMatchObject({ name: '好笔子', price: 3 })
+    expect(skipped).toBe(1)
+  })
 })
 
 describe('parseMaterialsXlsx', () => {
@@ -63,6 +85,33 @@ describe('parseMaterialsXlsx', () => {
     expect(materials).toHaveLength(2)
     expect(materials[0]).toMatchObject({ name: '笔记本', price: 5, quantity: 2 })
   })
+
+  it('首部整行空白不破坏列探测', () => {
+    const rows = [['', '', ''], ['名称', '单价', '数量'], ['笔记本', 5, 2]]
+    const { materials, skipped } = parseMaterialRows(rows)
+    expect(skipped).toBe(0)
+    expect(materials[0]).toMatchObject({ name: '笔记本', price: 5 })
+  })
+
+  it('第一个 sheet 无数据时自动尝试后续 sheet', () => {
+    const cover = XLSX.utils.aoa_to_sheet([['说明'], ['这是一个封面页']])
+    const data = XLSX.utils.aoa_to_sheet([
+      ['物资名称', '单价'],
+      ['笔记本', 5]
+    ])
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, cover, '封面')
+    XLSX.utils.book_append_sheet(wb, data, '数据')
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer
+    const { materials } = parseMaterialsXlsx(buffer)
+    expect(materials).toHaveLength(1)
+    expect(materials[0]).toMatchObject({ name: '笔记本', price: 5 })
+  })
+
+  it('isZipBuffer 识别 xlsx 魔数（PK）', () => {
+    expect(isZipBuffer(Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00]))).toBe(true)
+    expect(isZipBuffer(Buffer.from('名称,单价', 'utf-8'))).toBe(false)
+  })
 })
 
 describe('parsePeople', () => {
@@ -71,6 +120,68 @@ describe('parsePeople', () => {
   })
   it('兼容 CSV 取第一列', () => {
     expect(parsePeople('张三,男\n李四,女')).toEqual(['张三', '李四'])
+  })
+  it('首列表头（姓名/Name）被跳过而不是导入为人员', () => {
+    expect(parsePeople('姓名\n张三\n李四')).toEqual(['张三', '李四'])
+    expect(parsePeople('Name\nAlice\nBob')).toEqual(['Alice', 'Bob'])
+  })
+})
+
+describe('validateProject 项目校验', () => {
+  it('接受合法项目并保留有效字段', () => {
+    const project = validateProject({
+      version: 1,
+      title: '测试',
+      remark: '',
+      currency: '¥',
+      materials: [{ id: 'm1', name: '本子', price: 5, quantity: 2 }],
+      people: [{ id: 'p1', name: '张三' }],
+      schemes: [],
+      activeSchemeId: null
+    })
+    expect(project).not.toBeNull()
+    expect(project!.materials).toHaveLength(1)
+  })
+
+  it('assignment 为 null 的方案被剔除而不是崩溃（回归：typeof null === "object"）', () => {
+    const project = validateProject({
+      materials: [{ id: 'm1', name: '本子', price: 5, quantity: 1 }],
+      people: [{ id: 'p1', name: '张三' }],
+      schemes: [
+        { id: 's1', name: '坏方案', createdAt: '', strategy: 'greedy', assignment: null },
+        { id: 's2', name: '好方案', createdAt: '', strategy: 'greedy', assignment: { 'm1#1': 'p1' } }
+      ],
+      activeSchemeId: 's1'
+    })
+    expect(project).not.toBeNull()
+    expect(project!.schemes.map((s) => s.id)).toEqual(['s2'])
+    // 悬空的 activeSchemeId 回退为 null
+    expect(project!.activeSchemeId).toBeNull()
+  })
+
+  it('非法物资（负价 / 缺名）与幽灵 assignment 指向被剔除', () => {
+    const project = validateProject({
+      materials: [
+        { id: 'm1', name: '正常', price: 5, quantity: 2.9 },
+        { id: 'm2', name: '', price: 3, quantity: 1 },
+        { id: 'm3', name: '负价', price: -1, quantity: 1 }
+      ],
+      people: [{ id: 'p1', name: '张三' }],
+      schemes: [
+        { id: 's1', name: '方案', createdAt: '', strategy: 'greedy', assignment: { 'm1#1': 'p1', 'm1#2': 'ghost', 'm9#1': 'p1' } }
+      ],
+      activeSchemeId: null
+    })
+    expect(project!.materials.map((m) => m.id)).toEqual(['m1'])
+    expect(project!.materials[0].quantity).toBe(2) // 2.9 向下取整
+    expect(project!.schemes[0].assignment).toEqual({ 'm1#1': 'p1' })
+  })
+
+  it('根本不是对象时返回 null', () => {
+    expect(validateProject(null)).toBeNull()
+    expect(validateProject('str')).toBeNull()
+    expect(validateProject({})).toBeNull()
+    expect(validateProject({ materials: [], people: 'x' })).toBeNull()
   })
 })
 
@@ -116,5 +227,37 @@ describe('buildPersonRows / buildPrintHtml / buildDetailCsv', () => {
     expect(csv).toContain('张三')
     expect(csv.includes('"张三"')).toBe(false) // 无特殊字符不加引号
     expect(lines[lines.length - 1]).toContain('合计,14')
+  })
+
+  it('CSV 公式注入被转义（= 开头的名称按文本处理）', () => {
+    const risky = buildPersonRows(
+      [{ id: 'p1', name: '张三' }],
+      [{ unitId: 'm1#1', materialId: 'm1', name: '=HYPERLINK("http://x","点我")', price: 1 }],
+      { 'm1#1': 'p1' }
+    )
+    const csv = buildDetailCsv(risky, '¥')
+    expect(csv).toContain(`'=HYPERLINK`)
+  })
+
+  it('币种符号含逗号 / 引号时表头加引号包裹', () => {
+    const csv = buildDetailCsv(rows, 'usd,"x"')
+    const lines = csv.trim().split('\r\n')
+    expect(lines[0]).toContain('"单价（usd,""x""）"')
+  })
+
+  it('无分配物资人员打印为占位行；签名脚注不被分页拆断', () => {
+    const empty = buildPersonRows(
+      [
+        { id: 'p1', name: '张三' },
+        { id: 'p2', name: '李四' }
+      ],
+      [{ unitId: 'm1#1', materialId: 'm1', name: '笔记本', price: 5 }],
+      { 'm1#1': 'p1' }
+    )
+    expect(empty[1].items).toHaveLength(0)
+    const html = buildPrintHtml({ title: 'T', remark: '', currency: '¥', rows: empty, generatedAt: 'x' })
+    expect(html).toContain('（无分配物资）')
+    expect(html).toContain('.foot')
+    expect(html).toContain('page-break-inside: avoid')
   })
 })

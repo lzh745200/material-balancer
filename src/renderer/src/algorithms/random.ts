@@ -48,7 +48,9 @@ export function randomAssign(
   for (let r = 0; r < restarts; r++) {
     const cand = optimizeAssignment(greedyAssign(shuffled(), personIds), units, personIds, {
       maxPasses: 30,
-      timeBudgetMs: 300
+      // 用确定性的操作数预算替代墙钟：同一种子在慢机器上也能复现同一结果
+      maxOps: 150_000,
+      timeBudgetMs: 1500
     }).assignment
     const d = diffOf(cand)
     if (d < bestDiff - 1e-12) {

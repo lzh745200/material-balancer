@@ -50,6 +50,11 @@ export function distribute(
       case 'random':
         assignment = randomAssign(units, personIds)
         break
+      default: {
+        // 穷尽性保护：新增策略而忘记在此分发时，编译期与运行期都会失败
+        const unreachable: never = strategy
+        throw new Error(`未知的分配策略：${String(unreachable)}`)
+      }
     }
   }
   return { assignment, units, stats: computeStats(assignment, units, personIds) }

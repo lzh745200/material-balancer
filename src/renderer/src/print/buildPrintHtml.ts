@@ -41,7 +41,7 @@ tr { page-break-inside: avoid; }
 td.c { text-align: center; } td.r { text-align: right; } td.strong { font-weight: 700; }
 td.sign { min-width: 64px; }
 tr.total td { background: #fafafa; font-weight: 700; }
-.foot { margin-top: 16px; display: flex; justify-content: space-between; font-size: 12px; }
+.foot { margin-top: 16px; display: flex; justify-content: space-between; font-size: 12px; page-break-inside: avoid; break-inside: avoid; }
 .foot span { display: inline-block; min-width: 160px; }
 .empty-note { color: #888; }
 `

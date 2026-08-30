@@ -9,7 +9,9 @@ import {
   type ProjectFile,
   type SaveResult
 } from '@shared/types'
-import { decodeBuffer, parseMaterialsCsv, parseMaterialsXlsx, parsePeople } from './parse'
+import { validateProject } from '@shared/validate'
+import { decodeBuffer, isZipBuffer, parseMaterialsCsv, parseMaterialsXlsx, parsePeople } from './parse'
+import { atomicWriteFileSync } from './atomic'
 import { readDraft, writeDraft } from './draft'
 import { generatePdf, printHtml } from './pdf'
 
@@ -18,30 +20,7 @@ const PROJECT_FILTERS = [
   { name: '所有文件', extensions: ['*'] }
 ]
 
-/** 校验并规范化项目文件（打开外部 / 旧文件时防御性处理） */
-export function validateProject(raw: unknown): ProjectFile | null {
-  if (typeof raw !== 'object' || raw === null) return null
-  const o = raw as Record<string, unknown>
-  if (!Array.isArray(o.materials) || !Array.isArray(o.people)) return null
-  return {
-    version: 1,
-    title: typeof o.title === 'string' ? o.title : '物资分配领取表',
-    remark: typeof o.remark === 'string' ? o.remark : '',
-    currency: typeof o.currency === 'string' && o.currency ? o.currency : '¥',
-    materials: (o.materials as ProjectFile['materials']).filter(
-      (m) => m && typeof m.id === 'string' && typeof m.name === 'string' && Number.isFinite(m.price)
-    ),
-    people: (o.people as ProjectFile['people']).filter(
-      (p) => p && typeof p.id === 'string' && typeof p.name === 'string'
-    ),
-    schemes: Array.isArray(o.schemes)
-      ? (o.schemes as ProjectFile['schemes']).filter(
-          (s) => s && typeof s.id === 'string' && typeof s.assignment === 'object'
-        )
-      : [],
-    activeSchemeId: typeof o.activeSchemeId === 'string' ? o.activeSchemeId : null
-  }
-}
+/** 项目文件运行时校验见 @shared/validate（与渲染层 loadProject 共用同一实现） */
 
 function readJsonProject(file: string): ProjectFile {
   const buf = fs.readFileSync(file)
@@ -51,9 +30,24 @@ function readJsonProject(file: string): ProjectFile {
   return project
 }
 
+/** 原子写实现见 atomic.ts（避免与 draft.ts 循环引用） */
+
+/** 有主窗口时以主窗口为父级弹对话框，否则退化为无父级调用 */
+function showOpenDialog(e: Electron.IpcMainInvokeEvent, options: Electron.OpenDialogOptions) {
+  const parent = BrowserWindow.fromWebContents(e.sender)
+  return parent ? dialog.showOpenDialog(parent, options) : dialog.showOpenDialog(options)
+}
+
+function showSaveDialog(e: Electron.IpcMainInvokeEvent, options: Electron.SaveDialogOptions) {
+  const parent = BrowserWindow.fromWebContents(e.sender)
+  return parent ? dialog.showSaveDialog(parent, options) : dialog.showSaveDialog(options)
+}
+
+/** xlsx 魔数识别见 parse.ts 的 isZipBuffer */
+
 export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.ProjectOpen, async (e): Promise<OpenResult> => {
-    const res = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender)!, {
+    const res = await showOpenDialog(e, {
       title: '打开项目',
       filters: PROJECT_FILTERS,
       properties: ['openFile']
@@ -69,14 +63,14 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC.ProjectSaveAs,
     async (e, args: { content: string; defaultName: string }): Promise<SaveResult> => {
-      const res = await dialog.showSaveDialog(BrowserWindow.fromWebContents(e.sender)!, {
+      const res = await showSaveDialog(e, {
         title: '保存项目',
         defaultPath: path.join(app.getPath('documents'), args.defaultName),
         filters: PROJECT_FILTERS
       })
       if (res.canceled || !res.filePath) return { canceled: true }
       try {
-        fs.writeFileSync(res.filePath, args.content, 'utf-8')
+        atomicWriteFileSync(res.filePath, args.content)
         return { canceled: false, path: res.filePath }
       } catch (err) {
         return { canceled: false, error: (err as Error).message }
@@ -88,7 +82,7 @@ export function registerIpcHandlers(): void {
     IPC.ProjectSaveToPath,
     async (_e, args: { path: string; content: string }): Promise<SaveResult> => {
       try {
-        fs.writeFileSync(args.path, args.content, 'utf-8')
+        atomicWriteFileSync(args.path, args.content)
         return { canceled: false, path: args.path }
       } catch (err) {
         return { canceled: false, path: args.path, error: (err as Error).message }
@@ -97,7 +91,7 @@ export function registerIpcHandlers(): void {
   )
 
   ipcMain.handle(IPC.ImportMaterials, async (e): Promise<ImportMaterialsResult> => {
-    const res = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender)!, {
+    const res = await showOpenDialog(e, {
       title: '导入物资（CSV / Excel）',
       filters: [
         { name: '表格文件', extensions: ['csv', 'xlsx', 'xls'] },
@@ -110,7 +104,7 @@ export function registerIpcHandlers(): void {
     const file = res.filePaths[0]
     try {
       const buffer = fs.readFileSync(file)
-      const parsed = /\.(xlsx|xls)$/i.test(file) ? parseMaterialsXlsx(buffer) : parseMaterialsCsv(decodeBuffer(buffer))
+      const parsed = isZipBuffer(buffer) ? parseMaterialsXlsx(buffer) : parseMaterialsCsv(decodeBuffer(buffer))
       return { canceled: false, path: file, ...parsed }
     } catch (err) {
       return { canceled: false, path: file, materials: [], skipped: 0, error: (err as Error).message }
@@ -118,7 +112,7 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle(IPC.ImportPeople, async (e): Promise<ImportPeopleResult> => {
-    const res = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender)!, {
+    const res = await showOpenDialog(e, {
       title: '导入人员名单（txt / CSV，每行一个姓名）',
       filters: [
         { name: '文本文件', extensions: ['txt', 'csv'] },
@@ -135,8 +129,10 @@ export function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle(IPC.DraftSave, (_e, content: string) => {
-    writeDraft(content)
+  ipcMain.handle(IPC.DraftSave, (_e, content: string) => writeDraft(content))
+
+  ipcMain.on(IPC.DraftSaveSync, (e, content: string) => {
+    e.returnValue = writeDraft(content)
   })
 
   ipcMain.handle(IPC.DraftLoad, () => readDraft())
@@ -144,7 +140,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC.ExportPdf,
     async (e, args: { html: string; defaultName: string }): Promise<SaveResult> => {
-      const res = await dialog.showSaveDialog(BrowserWindow.fromWebContents(e.sender)!, {
+      const res = await showSaveDialog(e, {
         title: '导出 PDF',
         defaultPath: path.join(app.getPath('documents'), args.defaultName),
         filters: [{ name: 'PDF 文档', extensions: ['pdf'] }]
@@ -172,7 +168,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC.ExportCsv,
     async (e, args: { content: string; defaultName: string }): Promise<SaveResult> => {
-      const res = await dialog.showSaveDialog(BrowserWindow.fromWebContents(e.sender)!, {
+      const res = await showSaveDialog(e, {
         title: '导出 CSV 明细',
         defaultPath: path.join(app.getPath('documents'), args.defaultName),
         filters: [{ name: 'CSV 文件', extensions: ['csv'] }]
@@ -181,7 +177,7 @@ export function registerIpcHandlers(): void {
       try {
         // UTF-8 BOM：保证 Excel 直接打开中文不乱码
         const bom = args.content.startsWith('\uFEFF') ? '' : '\uFEFF'
-        fs.writeFileSync(res.filePath, bom + args.content, 'utf-8')
+        atomicWriteFileSync(res.filePath, bom + args.content)
         return { canceled: false, path: res.filePath }
       } catch (err) {
         return { canceled: false, error: (err as Error).message }

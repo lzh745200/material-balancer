@@ -61,13 +61,15 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown, Printer, RefreshLeft, RefreshRight } from '@element-plus/icons-vue'
 import type { AutoStrategy } from '@/algorithms'
 import { useProjectStore } from '@/stores/project'
+import { useGenerate } from '@/composables/useGenerate'
 import { buildPersonRows } from '@/print/rows'
 import { buildPrintHtml } from '@/print/buildPrintHtml'
 import { buildDetailCsv } from '@/utils/csvExport'
-import { formatDateTime, formatMoney } from '@/utils/format'
+import { formatDateTime } from '@/utils/format'
 import SettingsDialog from './dialogs/SettingsDialog.vue'
 
 const store = useProjectStore()
+const { generate } = useGenerate()
 const showSettings = ref(false)
 
 const canGenerate = computed(() => store.people.length > 0 && store.materials.length > 0)
@@ -100,7 +102,12 @@ async function onOpen(): Promise<void> {
     ElMessage.error(res.error || '打开文件失败')
     return
   }
-  store.loadProject(res.data, res.path ?? null)
+  try {
+    store.loadProject(res.data, res.path ?? null)
+  } catch (err) {
+    ElMessage.error((err as Error).message || '打开文件失败')
+    return
+  }
   ElMessage.success(`已打开：${res.path}`)
 }
 
@@ -137,15 +144,22 @@ async function onImportMaterials(): Promise<void> {
     ElMessage.warning('未解析到有效数据。CSV 需要「名称,单价,数量」列（有表头或无表头均可），数量列可省略（默认 1）。')
     return
   }
-  const addUnits = res.materials.reduce((acc, m) => acc + Math.max(1, m.quantity), 0)
+  const addUnits = res.materials.reduce((acc, m) => acc + Math.max(1, Math.floor(m.quantity || 1)), 0)
   if (store.wouldExceedUnitLimit(addUnits)) {
     ElMessage.error(`导入后物资总件数将超过上限（5000），请精简后再导入。`)
     return
   }
-  store.addImportedMaterials(res.materials)
+  try {
+    store.addImportedMaterials(res.materials)
+  } catch (err) {
+    ElMessage.error((err as Error).message)
+    return
+  }
+  const warnings = res.warnings ?? []
   ElMessage.success(
     `已导入 ${res.materials.length} 种物资${res.skipped > 0 ? `，跳过 ${res.skipped} 行无效数据` : ''}`
   )
+  for (const w of warnings.slice(0, 3)) ElMessage.warning(`解析提示：${w}`)
 }
 
 async function onImportPeople(): Promise<void> {
@@ -163,27 +177,8 @@ async function onImportPeople(): Promise<void> {
   ElMessage.success(`已导入 ${res.names.length} 名人员（重复姓名已忽略）`)
 }
 
-async function onGenerate(strategy: AutoStrategy): Promise<void> {
-  try {
-    store.generateAllocation(strategy)
-  } catch (err) {
-    ElMessage.error((err as Error).message)
-    return
-  }
-  const stats = store.stats
-  if (stats) {
-    ElMessage.success(
-      `方案已生成：最大差值 ${formatMoney(stats.diff, store.currency)}（平均 ${formatMoney(stats.avg, store.currency)}）`
-    )
-  }
-  if (store.overDiffWarning) {
-    ElMessageBox.alert(
-      '当前方案的价值差仍超过平均价值的 10%。可能原因：某件物资价值远高于人均水平，物理上无法进一步均衡；' +
-        '可尝试改用「贪心 + 优化」策略，或直接在右侧拖拽物资手动调整。',
-      '建议调整',
-      { confirmButtonText: '知道了', type: 'warning' }
-    ).catch(() => undefined)
-  }
+function onGenerate(strategy: AutoStrategy): void {
+  generate(strategy)
 }
 
 function requireScheme(): boolean {
@@ -196,11 +191,15 @@ function requireScheme(): boolean {
 
 async function confirmStale(): Promise<boolean> {
   if (!store.isStale) return true
-  return ElMessageBox.confirm(
-    '物资或人员在生成方案后发生了变化，导出内容可能与当前物资清单不一致。仍要继续吗？',
-    '提示',
-    { confirmButtonText: '继续导出', cancelButtonText: '取消', type: 'warning' }
-  )
+  const detail =
+    store.unassignedCount > 0
+      ? `当前方案还有 ${store.unassignedCount} 件物资未分配（或指向已删除的人员/物资），导出内容会小于实际库存。`
+      : '当前方案引用了已不存在的物资件，导出内容可能与当前物资清单不一致。'
+  return ElMessageBox.confirm(`${detail}仍要继续导出吗？`, '提示', {
+    confirmButtonText: '继续导出',
+    cancelButtonText: '取消',
+    type: 'warning'
+  })
     .then(() => true)
     .catch(() => false)
 }

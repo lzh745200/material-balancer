@@ -123,11 +123,15 @@ function add(): void {
     ElMessage.warning('单价必须为大于 0 的数字')
     return
   }
-  if (store.wouldExceedUnitLimit(quantity.value)) {
-    ElMessage.error(`物资总件数将超过上限（5000），请减少数量`)
+  if (store.materials.some((m) => m.name === trimmed)) {
+    ElMessage.warning('已存在同名物资，若规格不同建议用名称区分（如「笔记本 A4」「笔记本 B5」）')
+  }
+  try {
+    store.addMaterial(trimmed, price.value, quantity.value)
+  } catch (err) {
+    ElMessage.error((err as Error).message)
     return
   }
-  store.addMaterial(trimmed, price.value, quantity.value)
   name.value = ''
   price.value = undefined
   quantity.value = 1
@@ -154,7 +158,12 @@ function saveEdit(row: Material): void {
     ElMessage.warning('单价必须为大于 0 的数字')
     return
   }
-  store.updateMaterial(row.id, { name: trimmed, price: draft.price, quantity: draft.quantity })
+  try {
+    store.updateMaterial(row.id, { name: trimmed, price: draft.price, quantity: draft.quantity })
+  } catch (err) {
+    ElMessage.error((err as Error).message)
+    return
+  }
   editingId.value = null
 }
 

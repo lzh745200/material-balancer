@@ -21,6 +21,12 @@ export function formatDateTime(d: Date | string): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
+/** 本地时区的 yyyy-MM-dd（用于默认文件名，避免 UTC 日期在晚间偏差一天） */
+export function formatDate(d: Date = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
 export function todayString(): string {
   const d = new Date()
   const pad = (n: number) => String(n).padStart(2, '0')
