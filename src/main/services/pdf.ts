@@ -62,10 +62,33 @@ async function renderToHiddenWindow(html: string): Promise<RenderedPrint> {
   return { win, cleanup }
 }
 
-/** 生成 A4 PDF 字节流（页面边距由模板 CSS 的 @page 控制） */
-export async function generatePdf(html: string): Promise<Buffer> {
-  const { win, cleanup } = await renderToHiddenWindow(html)
+/** 生成 A4 PDF 字节流。pageNumbers 时附加「第 X 页 / 共 Y 页」页脚 */
+export async function generatePdf(
+  html: string,
+  options: { pageNumbers?: boolean } = {}
+): Promise<Buffer> {
+  // 页码模式由 Chromium 页眉/页脚承载，改用选项边距并清零 CSS @page 边距（二者不能叠加）
+  const override =
+    options.pageNumbers === true ? '<style>@page { margin: 0; }</style>' : ''
+  const { win, cleanup } = await renderToHiddenWindow(
+    html.replace('<!--PDF_PAGE_OVERRIDE-->', override)
+  )
   try {
+    if (options.pageNumbers === true) {
+      // 与模板 CSS @page 的 14mm/12mm 对齐；底部多留 4mm 给页脚
+      const m = (v: number): number => v / 25.4
+      return await win.webContents.printToPDF({
+        printBackground: true,
+        pageSize: 'A4',
+        preferCSSPageSize: false,
+        margins: { top: m(14), bottom: m(16), left: m(12), right: m(12) },
+        displayHeaderFooter: true,
+        headerTemplate: '<span></span>',
+        footerTemplate:
+          '<div style="width:100%;font-size:8px;text-align:center;color:#666;">' +
+          '第 <span class="pageNumber"></span> 页 / 共 <span class="totalPages"></span> 页</div>'
+      })
+    }
     return await win.webContents.printToPDF({
       printBackground: true,
       pageSize: 'A4',

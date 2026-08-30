@@ -89,7 +89,9 @@ export const useProjectStore = defineStore('project', {
     /** 随机模式重启次数 */
     randomRestarts: 24,
     /** 随机种子（null = 每次随机） */
-    randomSeed: null as number | null
+    randomSeed: null as number | null,
+    /** 导出 PDF 时附加页码页脚 */
+    printPageNumbers: true
   }),
 
   getters: {
@@ -563,12 +565,13 @@ export const useProjectStore = defineStore('project', {
 
     /* ---------- 设置 ---------- */
 
-    /** 更新分配偏好（会话级，不进入撤销历史、不随项目保存） */
+    /** 更新分配 / 打印偏好（会话级，不进入撤销历史、不随项目保存） */
     setAlgoPrefs(patch: {
       allowSurplus?: boolean
       optimizeMaxPasses?: number
       randomRestarts?: number
       randomSeed?: number | null
+      printPageNumbers?: boolean
     }): void {
       if (patch.allowSurplus !== undefined) this.allowSurplus = patch.allowSurplus
       if (patch.optimizeMaxPasses !== undefined) {
@@ -578,6 +581,7 @@ export const useProjectStore = defineStore('project', {
         this.randomRestarts = Math.min(100, Math.max(0, Math.floor(patch.randomRestarts)))
       }
       if (patch.randomSeed !== undefined) this.randomSeed = patch.randomSeed
+      if (patch.printPageNumbers !== undefined) this.printPageNumbers = patch.printPageNumbers
     },
 
     updateSettings(patch: { title?: string; remark?: string; currency?: string }): void {

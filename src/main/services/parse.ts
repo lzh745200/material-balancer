@@ -155,10 +155,27 @@ export function parsePeople(text: string): string[] {
   const parsed = Papa.parse<unknown[]>(text.replace(/^\uFEFF/, ''), {
     skipEmptyLines: 'greedy'
   })
+  return namesFromFirstColumn(parsed.data.map((row) => String(row?.[0] ?? '')))
+}
+
+/** 人员名单 XLSX：取第一个含数据的 sheet 的第一列 */
+export function parsePeopleXlsx(buffer: Buffer): string[] {
+  const wb = XLSX.read(buffer, { type: 'buffer' })
+  for (const sheetName of wb.SheetNames) {
+    const sheet = wb.Sheets[sheetName]
+    if (!sheet) continue
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '' })
+    const names = namesFromFirstColumn(rows.map((row) => String(row?.[0] ?? '')))
+    if (names.length) return names
+  }
+  return []
+}
+
+function namesFromFirstColumn(cells: string[]): string[] {
   const names: string[] = []
   const seen = new Set<string>()
-  for (const [i, row] of parsed.data.entries()) {
-    const name = String(row?.[0] ?? '').trim()
+  for (const [i, raw] of cells.entries()) {
+    const name = raw.trim()
     if (i === 0 && PEOPLE_HEADER.test(name)) continue
     if (!name || seen.has(name)) continue
     seen.add(name)

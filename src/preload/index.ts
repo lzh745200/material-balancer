@@ -19,9 +19,12 @@ const api: Api = {
   },
   notifyDirty: (dirty) => ipcRenderer.send(IPC.ProjectDirtyChanged, dirty),
   loadDraft: () => ipcRenderer.invoke(IPC.DraftLoad),
-  exportPdf: (html, defaultName) => ipcRenderer.invoke(IPC.ExportPdf, { html, defaultName }),
+  exportPdf: (html, defaultName, pageNumbers) =>
+    ipcRenderer.invoke(IPC.ExportPdf, { html, defaultName, pageNumbers }),
   printHtml: (html) => ipcRenderer.invoke(IPC.ExportPrint, html),
   exportCsv: (content, defaultName) => ipcRenderer.invoke(IPC.ExportCsv, { content, defaultName }),
+  exportXlsx: (data, defaultName) => ipcRenderer.invoke(IPC.ExportXlsx, { data, defaultName }),
+  exportTemplate: () => ipcRenderer.invoke(IPC.ExportTemplate),
   revealPath: (path) => ipcRenderer.invoke(IPC.RevealPath, path),
   listRecents: () => ipcRenderer.invoke(IPC.RecentsList),
   removeRecent: (path) => ipcRenderer.invoke(IPC.RecentsRemove, path),

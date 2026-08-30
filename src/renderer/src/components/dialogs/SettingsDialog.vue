@@ -20,11 +20,17 @@
         </el-select>
       </el-form-item>
 
-      <el-divider content-position="left">分配偏好（会话级，不随项目保存）</el-divider>
+      <el-divider content-position="left">分配与打印偏好（会话级，不随项目保存）</el-divider>
       <el-form-item label="允许剩余">
         <div class="hint-line">
           <el-switch v-model="form.allowSurplus" />
           <span class="hint">每人不超过人均价值，装不下的件留作未分配池（使用贪心装填）</span>
+        </div>
+      </el-form-item>
+      <el-form-item label="PDF 页码">
+        <div class="hint-line">
+          <el-switch v-model="form.printPageNumbers" />
+          <span class="hint">导出 PDF 时在页脚附加「第 X 页 / 共 Y 页」</span>
         </div>
       </el-form-item>
       <el-form-item label="优化轮数">
@@ -75,6 +81,7 @@ const form = reactive({
   remark: '',
   currency: '¥',
   allowSurplus: false,
+  printPageNumbers: true,
   optimizeMaxPasses: 100,
   randomRestarts: 24,
   randomSeed: undefined as number | undefined
@@ -88,6 +95,7 @@ watch(
       form.remark = store.remark
       form.currency = store.currency
       form.allowSurplus = store.allowSurplus
+      form.printPageNumbers = store.printPageNumbers
       form.optimizeMaxPasses = store.optimizeMaxPasses
       form.randomRestarts = store.randomRestarts
       form.randomSeed = store.randomSeed ?? undefined
@@ -104,6 +112,7 @@ function save(): void {
   store.updateSettings({ title: form.title, remark: form.remark, currency: form.currency })
   store.setAlgoPrefs({
     allowSurplus: form.allowSurplus,
+    printPageNumbers: form.printPageNumbers,
     optimizeMaxPasses: form.optimizeMaxPasses,
     randomRestarts: form.randomRestarts,
     randomSeed: form.randomSeed ?? null

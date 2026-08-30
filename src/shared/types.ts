@@ -133,6 +133,8 @@ export const IPC = {
   ExportPdf: 'export:pdf',
   ExportPrint: 'export:print',
   ExportCsv: 'export:csv',
+  ExportXlsx: 'export:xlsx',
+  ExportTemplate: 'export:template',
   RevealPath: 'shell:reveal-path'
 } as const
 
@@ -163,12 +165,16 @@ export interface Api {
   notifyDirty(dirty: boolean): void
   /** 读取草稿，无草稿返回 null */
   loadDraft(): Promise<string | null>
-  /** 生成 PDF 并保存，返回保存路径 */
-  exportPdf(html: string, defaultName: string): Promise<SaveResult>
+  /** 导出 PDF（pageNumbers 时附加「第 X 页 / 共 Y 页」页脚），返回保存路径 */
+  exportPdf(html: string, defaultName: string, pageNumbers?: boolean): Promise<SaveResult>
   /** 调起系统打印对话框 */
   printHtml(html: string): Promise<{ error?: string }>
   /** 导出 CSV */
   exportCsv(content: string, defaultName: string): Promise<SaveResult>
+  /** 导出 XLSX（分配明细 + 按人汇总双 sheet） */
+  exportXlsx(data: Uint8Array, defaultName: string): Promise<SaveResult>
+  /** 下载导入模板（物资表 + 人员名单双 sheet 的 xlsx） */
+  exportTemplate(): Promise<SaveResult>
   /** 在文件管理器中显示文件 */
   revealPath(path: string): Promise<void>
   /** 最近打开的项目文件列表（最新的在前，最多 10 条） */

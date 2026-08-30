@@ -34,6 +34,9 @@
     <el-button-group>
       <el-button @click="actions.onImportMaterials()">导入物资</el-button>
       <el-button @click="actions.onImportPeople()">导入人员</el-button>
+      <el-tooltip content="下载含示例数据的导入模板（物资表 + 人员名单）" placement="bottom">
+        <el-button @click="actions.onDownloadTemplate()">模板</el-button>
+      </el-tooltip>
     </el-button-group>
 
     <el-divider direction="vertical" />
@@ -65,6 +68,7 @@
 
     <el-button-group>
       <el-button type="success" @click="actions.onExportPdf()">导出 PDF</el-button>
+      <el-button @click="actions.onExportXlsx()">导出 Excel</el-button>
       <el-button @click="actions.onPrint()"><el-icon class="el-icon--left"><Printer /></el-icon>打印</el-button>
       <el-button @click="actions.onExportCsv()">导出 CSV</el-button>
     </el-button-group>

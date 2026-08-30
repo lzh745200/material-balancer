@@ -7,12 +7,15 @@ import {
   parseMaterialRows,
   parseMaterialsCsv,
   parseMaterialsXlsx,
-  parsePeople
+  parsePeople,
+  parsePeopleXlsx
 } from '../src/main/services/parse'
 import { validateProject } from '../src/shared/validate'
+import { buildTemplateWorkbook } from '../src/main/services/template'
 import { buildPersonRows } from '../src/renderer/src/print/rows'
 import { buildPrintHtml } from '../src/renderer/src/print/buildPrintHtml'
 import { buildDetailCsv } from '../src/renderer/src/utils/csvExport'
+import { buildXlsxWorkbook } from '../src/renderer/src/utils/xlsxExport'
 
 describe('decodeBuffer 编码识别', () => {
   it('识别 UTF-8 BOM', () => {
@@ -111,6 +114,19 @@ describe('parseMaterialsXlsx', () => {
   it('isZipBuffer 识别 xlsx 魔数（PK）', () => {
     expect(isZipBuffer(Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00]))).toBe(true)
     expect(isZipBuffer(Buffer.from('名称,单价', 'utf-8'))).toBe(false)
+  })
+
+  it('人员名单 xlsx：取第一列并跳过表头', () => {
+    const ws = XLSX.utils.aoa_to_sheet([['姓名'], ['张三'], ['李四']])
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, '人员名单')
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer
+    expect(parsePeopleXlsx(buffer)).toEqual(['张三', '李四'])
+  })
+
+  it('导入模板包含物资表与人员名单两个 sheet', () => {
+    const wb = XLSX.read(buildTemplateWorkbook(), { type: 'buffer' })
+    expect(wb.SheetNames).toEqual(['物资表', '人员名单'])
   })
 })
 
@@ -259,5 +275,54 @@ describe('buildPersonRows / buildPrintHtml / buildDetailCsv', () => {
     expect(html).toContain('（无分配物资）')
     expect(html).toContain('.foot')
     expect(html).toContain('page-break-inside: avoid')
+  })
+
+  it('小块人员整块禁止跨页；大块人员每行重复姓名（续页行淡色）', () => {
+    const small = buildPrintHtml({
+      title: 'T', remark: '', currency: '¥',
+      rows: buildPersonRows([{ id: 'p1', name: '张三' }],
+        [{ unitId: 'm1#1', materialId: 'm1', name: '本子', price: 5 }],
+        { 'm1#1': 'p1' }),
+      generatedAt: 'x'
+    })
+    expect(small).toContain('<tbody class="block">')
+
+    // 15 件超过 PAGE_SAFE_ROWS(14)：不用 rowspan 合并姓名，每行都有姓名单元格
+    const units = Array.from({ length: 15 }, (_, i) => ({
+      unitId: `m${i + 1}#1`, materialId: `m${i + 1}`, name: `物${i + 1}`, price: 1
+    }))
+    const assignment = Object.fromEntries(units.map((u) => [u.unitId, 'p1']))
+    const large = buildPrintHtml({
+      title: 'T', remark: '', currency: '¥',
+      rows: buildPersonRows([{ id: 'p1', name: '张三' }], units, assignment),
+      generatedAt: 'x'
+    })
+    expect(large).toContain('name-cell cont')
+    expect((large.match(/name-cell/g) ?? []).length).toBeGreaterThanOrEqual(15)
+  })
+
+  it('XLSX 导出包含分配明细与按人汇总两个 sheet 且数值正确', () => {
+    const rows = buildPersonRows(
+      [
+        { id: 'p1', name: '张三' },
+        { id: 'p2', name: '李四' }
+      ],
+      [
+        { unitId: 'm1#1', materialId: 'm1', name: '笔记本', price: 5 },
+        { unitId: 'm1#2', materialId: 'm1', name: '笔记本', price: 5 },
+        { unitId: 'm2#1', materialId: 'm2', name: '钢笔', price: 3 }
+      ],
+      { 'm1#1': 'p1', 'm1#2': 'p1', 'm2#1': 'p2' }
+    )
+    const wb = XLSX.read(buildXlsxWorkbook(rows, 'T', '¥'), { type: 'buffer' })
+    expect(wb.SheetNames).toEqual(['分配明细', '按人汇总'])
+    const detail = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets['分配明细'], { header: 1 })
+    expect(detail[0]).toContain('物资名称')
+    expect(detail.some((r) => String(r[2] ?? '') === '笔记本')).toBe(true)
+    const summary = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets['按人汇总'], { header: 1 })
+    // 表头 + 2 人 + 合计行
+    expect(summary).toHaveLength(4)
+    expect(summary[1]).toEqual([1, '张三', 2, 10])
+    expect(summary[3]).toEqual(['', '合计', 3, 13])
   })
 })

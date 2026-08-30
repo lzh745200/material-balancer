@@ -10,11 +10,19 @@ import {
   type SaveResult
 } from '@shared/types'
 import { validateProject } from '@shared/validate'
-import { decodeBuffer, isZipBuffer, parseMaterialsCsv, parseMaterialsXlsx, parsePeople } from './parse'
+import {
+  decodeBuffer,
+  isZipBuffer,
+  parseMaterialsCsv,
+  parseMaterialsXlsx,
+  parsePeople,
+  parsePeopleXlsx
+} from './parse'
 import { atomicWriteFileSync } from './atomic'
 import { readDraft, writeDraft } from './draft'
 import { generatePdf, printHtml } from './pdf'
 import { listRecents, pushRecent, removeRecent } from './recents'
+import { buildTemplateWorkbook } from './template'
 
 const PROJECT_FILTERS = [
   { name: '物资分配项目', extensions: ['mproj', 'json'] },
@@ -68,10 +76,11 @@ function importMaterialsFile(file: string): ImportMaterialsResult {
   }
 }
 
-/** 从磁盘解析人员名单（对话框与拖拽导入共用） */
+/** 从磁盘解析人员名单（对话框与拖拽导入共用；xlsx 取第一列） */
 function importPeopleFile(file: string): ImportPeopleResult {
   try {
-    const names = parsePeople(decodeBuffer(fs.readFileSync(file)))
+    const buffer = fs.readFileSync(file)
+    const names = isZipBuffer(buffer) ? parsePeopleXlsx(buffer) : parsePeople(decodeBuffer(buffer))
     return { canceled: false, path: file, names }
   } catch (err) {
     return { canceled: false, path: file, names: [], error: (err as Error).message }
@@ -153,9 +162,9 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC.ImportPeople, async (e): Promise<ImportPeopleResult> => {
     const res = await showOpenDialog(e, {
-      title: '导入人员名单（txt / CSV，每行一个姓名）',
+      title: '导入人员名单（txt / CSV / Excel，每行一个姓名）',
       filters: [
-        { name: '文本文件', extensions: ['txt', 'csv'] },
+        { name: '名单文件', extensions: ['txt', 'csv', 'xlsx', 'xls'] },
         { name: '所有文件', extensions: ['*'] }
       ],
       properties: ['openFile']
@@ -178,7 +187,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     IPC.ExportPdf,
-    async (e, args: { html: string; defaultName: string }): Promise<SaveResult> => {
+    async (e, args: { html: string; defaultName: string; pageNumbers?: boolean }): Promise<SaveResult> => {
       const res = await showSaveDialog(e, {
         title: '导出 PDF',
         defaultPath: path.join(app.getPath('documents'), args.defaultName),
@@ -186,7 +195,7 @@ export function registerIpcHandlers(): void {
       })
       if (res.canceled || !res.filePath) return { canceled: true }
       try {
-        const pdf = await generatePdf(args.html)
+        const pdf = await generatePdf(args.html, { pageNumbers: args.pageNumbers === true })
         fs.writeFileSync(res.filePath, pdf)
         return { canceled: false, path: res.filePath }
       } catch (err) {
@@ -223,6 +232,39 @@ export function registerIpcHandlers(): void {
       }
     }
   )
+
+  ipcMain.handle(
+    IPC.ExportXlsx,
+    async (e, args: { data: Uint8Array; defaultName: string }): Promise<SaveResult> => {
+      const res = await showSaveDialog(e, {
+        title: '导出 Excel',
+        defaultPath: path.join(app.getPath('documents'), args.defaultName),
+        filters: [{ name: 'Excel 工作簿', extensions: ['xlsx'] }]
+      })
+      if (res.canceled || !res.filePath) return { canceled: true }
+      try {
+        fs.writeFileSync(res.filePath, Buffer.from(args.data))
+        return { canceled: false, path: res.filePath }
+      } catch (err) {
+        return { canceled: false, error: (err as Error).message }
+      }
+    }
+  )
+
+  ipcMain.handle(IPC.ExportTemplate, async (e): Promise<SaveResult> => {
+    const res = await showSaveDialog(e, {
+      title: '下载导入模板',
+      defaultPath: path.join(app.getPath('documents'), '导入模板.xlsx'),
+      filters: [{ name: 'Excel 工作簿', extensions: ['xlsx'] }]
+    })
+    if (res.canceled || !res.filePath) return { canceled: true }
+    try {
+      fs.writeFileSync(res.filePath, buildTemplateWorkbook())
+      return { canceled: false, path: res.filePath }
+    } catch (err) {
+      return { canceled: false, error: (err as Error).message }
+    }
+  })
 
   ipcMain.handle(IPC.RevealPath, (_e, p: string) => {
     if (p && fs.existsSync(p)) shell.showItemInFolder(p)

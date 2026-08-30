@@ -5,6 +5,7 @@ import { useGenerate } from '@/composables/useGenerate'
 import { buildPersonRows } from '@/print/rows'
 import { buildPrintHtml } from '@/print/buildPrintHtml'
 import { buildDetailCsv } from '@/utils/csvExport'
+import { buildXlsxWorkbook } from '@/utils/xlsxExport'
 import { formatDateTime } from '@/utils/format'
 
 /**
@@ -220,7 +221,11 @@ export function useProjectActions() {
   async function onExportPdf(): Promise<void> {
     if (!requireScheme()) return
     if (!(await confirmStale())) return
-    const res = await window.api.exportPdf(buildHtml(), `${store.defaultFileName}.pdf`)
+    const res = await window.api.exportPdf(
+      buildHtml(),
+      `${store.defaultFileName}.pdf`,
+      store.printPageNumbers
+    )
     if (res.canceled) return
     if (res.error) {
       ElMessage.error(`导出 PDF 失败：${res.error}`)
@@ -234,6 +239,34 @@ export function useProjectActions() {
     })
       .then(() => window.api.revealPath(path))
       .catch(() => undefined)
+  }
+
+  async function onExportXlsx(): Promise<void> {
+    if (!requireScheme()) return
+    if (!(await confirmStale())) return
+    const rows = buildPersonRows(
+      store.people.filter((p) => p.active !== false),
+      store.units,
+      store.activeScheme!.assignment
+    )
+    const data = buildXlsxWorkbook(rows, store.title, store.currency)
+    const res = await window.api.exportXlsx(data, `${store.defaultFileName}.xlsx`)
+    if (res.canceled) return
+    if (res.error) {
+      ElMessage.error(`导出 Excel 失败：${res.error}`)
+      return
+    }
+    ElMessage.success(`Excel 已保存到：${res.path}`)
+  }
+
+  async function onDownloadTemplate(): Promise<void> {
+    const res = await window.api.exportTemplate()
+    if (res.canceled) return
+    if (res.error) {
+      ElMessage.error(`下载模板失败：${res.error}`)
+      return
+    }
+    ElMessage.success(`模板已保存到：${res.path}`)
   }
 
   async function onPrint(): Promise<void> {
@@ -275,6 +308,8 @@ export function useProjectActions() {
     onImportPeople,
     onImportPeopleByPath,
     onExportPdf,
+    onExportXlsx,
+    onDownloadTemplate,
     onPrint,
     onExportCsv
   }
