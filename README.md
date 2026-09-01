@@ -78,21 +78,26 @@ git push origin v1.1.1
 
 ### 麒麟 V10（ARM64）安装
 
-```bash
-# 方式一：deb 安装
-sudo dpkg -i material-balancer-*-linux-arm64.deb
-# 缺依赖时：sudo apt -f install
+> **重要**：麒麟 V10 自带的 deb 图形安装器（Python 实现）解析第三方 deb 时存在已知缺陷，
+> 双击安装可能报 `local variable 'deb' referenced before assignment` —— 这是系统安装器
+> 自身的问题，与本应用无关。请改用下面**方式一（命令行安装 deb）**或**方式二（一键脚本，完全不经过系统安装器）**。
 
-# 方式二：绿色版（建议用 sudo 解压，保留沙箱所需的 SUID 位）
-sudo tar xzf material-balancer-*-linux-arm64.tar.gz -C /opt
-/opt/物资均衡分配工具/material-balancer
+```bash
+# 方式一：命令行安装 deb（标准 dpkg 路径，不经过麒麟图形安装器）
+sudo apt install ./material-balancer-*-linux-arm64.deb
+# 或：sudo dpkg -i material-balancer-*-linux-arm64.deb && sudo apt -f install
+
+# 方式二：绿色版一键安装（推荐，同样自动创建桌面菜单图标）
+tar xzf material-balancer-*-linux-arm64.tar.gz
+cd 物资均衡分配工具
+sudo bash install.sh        # 无 root 时去掉 sudo，装到 ~/.local/opt
 ```
 
 **沙箱与启动（v1.1.1 起无需手动处理）**：
 
 - v1.1.1 修复了 Electron 打包产物 `chrome-sandbox` 缺少 SUID 位（默认 755）导致的
   `FATAL: The SUID sandbox helper binary was found, but is not configured correctly`
-  启动失败：打包阶段与 deb 安装后都会自动把权限修正为 4755；
+  启动失败：打包阶段、deb 安装后与 install.sh 都会把权限修正为 4755；
 - 即使权限仍不满足（如内核关闭了非特权 user namespace），应用也会**自动降级为
   no-sandbox 模式启动**并在终端输出提示，保证一定打得开；
 - 如遇界面空白（老旧 ARM GPU），可改用软件渲染启动：`MB_DISABLE_GPU=1 ./material-balancer`。
