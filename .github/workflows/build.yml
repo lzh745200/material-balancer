@@ -112,13 +112,14 @@ jobs:
       # 同时打印 deb 控制信息便于远程排查系统安装器兼容问题
       - name: 校验 chrome-sandbox SUID 位
         run: |
-          LISTING=$(tar tvzf dist/*.tar.gz | grep -E 'chrome-sandbox|install.sh')
+          LISTING=$(tar tvzf dist/*.tar.gz | grep -E 'chrome-sandbox|install\.sh')
           echo "$LISTING"
-          echo "$LISTING" | grep -q 'drwsr-xr-x.*chrome-sandbox'
+          # SUID 在权限串中显示为用户位的 s（-rwsr-xr-x）
+          echo "$LISTING" | grep 'chrome-sandbox' | grep -q 'rws'
           echo "$LISTING" | grep -q 'install.sh'
           DEB=$(ls dist/*.deb)
           dpkg-deb -I "$DEB" | sed -n '1,30p'
-          dpkg-deb -x "$DEB" /tmp/debroot
+          sudo dpkg-deb -x "$DEB" /tmp/debroot
           MODE=$(stat -c '%a' /tmp/debroot/opt/*/chrome-sandbox)
           echo "deb chrome-sandbox mode: $MODE"
           test "$MODE" = "4755"
