@@ -1,8 +1,34 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import * as fs from 'fs'
 import * as path from 'path'
 import { IPC } from '@shared/types'
 import { registerIpcHandlers } from './services/fileIO'
 import { buildAppMenu } from './menu'
+
+/**
+ * 麒麟 V10 等旧内核发行版的启动兜底：
+ * chrome-sandbox 不存在或缺少 SUID 位（4755）时，Chromium 会直接拒绝启动。
+ * 此时自动降级为无沙箱模式（应用完全离线，风险可控），
+ * 而不是弹一个用户看不懂的 FATAL 报错。以 root 运行时也必须降级。
+ */
+if (process.platform === 'linux') {
+  const isRoot = typeof process.getuid === 'function' && process.getuid() === 0
+  const helper = path.join(path.dirname(process.execPath), 'chrome-sandbox')
+  let sandboxOk = false
+  try {
+    const st = fs.statSync(helper)
+    sandboxOk = (st.mode & 0o4000) !== 0 && st.uid === 0
+  } catch {
+    // 助手不存在同样视为不可用
+  }
+  if (isRoot || !sandboxOk) {
+    app.commandLine.appendSwitch('no-sandbox')
+    app.commandLine.appendSwitch('disable-setuid-sandbox')
+    console.warn('[main] SUID 沙箱不可用，已自动降级为 no-sandbox 模式启动')
+  }
+  // 老旧 GPU（部分麒麟 ARM 机型）白屏时的软件渲染逃生开关：MB_DISABLE_GPU=1
+  if (process.env.MB_DISABLE_GPU === '1') app.disableHardwareAcceleration()
+}
 
 /** 渲染进程上报的「有未保存修改」标志（关窗确认用） */
 let rendererDirty = false

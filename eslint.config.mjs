@@ -50,5 +50,14 @@ export default tseslint.config(
     // 构建脚本允许直接 console 输出进度
     files: ['scripts/**/*.mjs'],
     rules: { 'no-console': 'off' }
+  },
+  {
+    // electron-builder 打包钩子：CJS 形式，Node 全局
+    files: ['build/**/*.cjs'],
+    languageOptions: { globals: { ...globals.node, ...globals.es2022 } },
+    rules: {
+      'no-console': 'off',
+      '@typescript-eslint/no-require-imports': 'off'
+    }
   }
 )

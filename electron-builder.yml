@@ -6,6 +6,9 @@ directories:
   output: dist
   buildResources: build
 
+# 打包后给 chrome-sandbox 补 SUID 位（4755），麒麟 V10 等系统必需
+afterPack: build/afterPack.cjs
+
 # electron-vite 构建产物（主进程已把纯 JS 依赖打包进 out，无需携带 node_modules）
 files:
   - out/**
@@ -48,6 +51,9 @@ linux:
   icon: build/icon.png
   category: Utility
   maintainer: material-balancer
+  # 可执行文件用 ASCII 名，避免老旧发行版非 UTF-8 locale 下的路径怪问题；
+  # 桌面快捷方式仍显示中文 productName
+  executableName: material-balancer
   artifactName: ${name}-${version}-linux-${arch}.${ext}
   target:
     - target: deb
@@ -59,3 +65,5 @@ linux:
 
 deb:
   artifactName: ${name}-${version}-linux-arm64.${ext}
+  # 安装后确保 chrome-sandbox 为 root 所有且 4755（dpkg 解包可能不带 SUID）
+  afterInstall: build/kylin-after-install.sh

@@ -108,6 +108,18 @@ jobs:
       - name: 打包 Linux ARM64（deb + tar.gz）
         run: npx electron-builder --linux --publish never
 
+      # 麒麟 V10 启动失败回归防线：产物内 chrome-sandbox 必须带 SUID 位（4755）
+      - name: 校验 chrome-sandbox SUID 位
+        run: |
+          LISTING=$(tar tvzf dist/*.tar.gz | grep chrome-sandbox)
+          echo "$LISTING"
+          echo "$LISTING" | grep -q 'drwsr-xr-x'
+          DEB=$(ls dist/*.deb)
+          dpkg-deb -x "$DEB" /tmp/debroot
+          MODE=$(stat -c '%a' /tmp/debroot/opt/*/chrome-sandbox)
+          echo "deb chrome-sandbox mode: $MODE"
+          test "$MODE" = "4755"
+
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:

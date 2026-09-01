@@ -1,6 +1,6 @@
 {
   "name": "material-balancer",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "物资均衡分配工具 - 将物资清单公平分配给若干人员并生成可打印的 A4 签字表格（完全离线）",
   "main": "out/main/index.js",
   "author": "Material Balancer Team",

@@ -72,8 +72,8 @@ Node.js ≥ 18（CI 使用 20，见 `.nvmrc`）。
 2. **正式发布**：推送与 `package.json` 版本一致的标签，自动创建 GitHub Release 并附全部安装包：
 
 ```bash
-git tag v1.1.0
-git push origin v1.1.0
+git tag v1.1.1
+git push origin v1.1.1
 ```
 
 ### 麒麟 V10（ARM64）安装
@@ -83,17 +83,23 @@ git push origin v1.1.0
 sudo dpkg -i material-balancer-*-linux-arm64.deb
 # 缺依赖时：sudo apt -f install
 
-# 方式二：绿色版（无需 root）
-tar xzf material-balancer-*-linux-arm64.tar.gz
-./物资均衡分配工具/material-balancer   # 或目录内可执行文件
+# 方式二：绿色版（建议用 sudo 解压，保留沙箱所需的 SUID 位）
+sudo tar xzf material-balancer-*-linux-arm64.tar.gz -C /opt
+/opt/物资均衡分配工具/material-balancer
 ```
 
-常见问题：
+**沙箱与启动（v1.1.1 起无需手动处理）**：
 
-- 若启动报 sandbox 相关错误（内核较旧的系统），可追加参数运行：
-  `./material-balancer --no-sandbox`（仅建议在可信内网环境使用）；
-- 依赖库：`libgtk-3`、`libnss3`、`libxss1`、`libasound2` 等（麒麟 V10 桌面版一般自带）；
-- PDF / 打印所需中文字体已随包内置，不依赖系统字体。
+- v1.1.1 修复了 Electron 打包产物 `chrome-sandbox` 缺少 SUID 位（默认 755）导致的
+  `FATAL: The SUID sandbox helper binary was found, but is not configured correctly`
+  启动失败：打包阶段与 deb 安装后都会自动把权限修正为 4755；
+- 即使权限仍不满足（如内核关闭了非特权 user namespace），应用也会**自动降级为
+  no-sandbox 模式启动**并在终端输出提示，保证一定打得开；
+- 如遇界面空白（老旧 ARM GPU），可改用软件渲染启动：`MB_DISABLE_GPU=1 ./material-balancer`。
+
+依赖库：`libgtk-3`、`libnss3`、`libxss1`、`libasound2` 等（麒麟 V10 桌面版一般自带）；
+PDF / 打印所需中文字体已随包内置，不依赖系统字体。实测确认 Electron 37 的 Linux 二进制
+仅要求 GLIBC ≥ 2.25，麒麟 V10（2.28/2.31）无需任何额外处理。
 
 ## 导入格式
 
