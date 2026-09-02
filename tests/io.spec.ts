@@ -3,6 +3,8 @@ import * as XLSX from 'xlsx'
 import * as iconv from 'iconv-lite'
 import {
   decodeBuffer,
+  isExcelBuffer,
+  isOle2Buffer,
   isZipBuffer,
   parseMaterialRows,
   parseMaterialsCsv,
@@ -11,6 +13,7 @@ import {
   parsePeopleXlsx
 } from '../src/main/services/parse'
 import { validateProject } from '../src/shared/validate'
+import { MAX_UNITS } from '../src/shared/types'
 import { buildTemplateWorkbook } from '../src/main/services/template'
 import { buildPersonRows } from '../src/renderer/src/print/rows'
 import { buildPrintHtml } from '../src/renderer/src/print/buildPrintHtml'
@@ -72,6 +75,18 @@ describe('parseMaterialsCsv', () => {
     expect(materials[0]).toMatchObject({ name: '好笔子', price: 3 })
     expect(skipped).toBe(1)
   })
+
+  it('无表头文件首行物资名含"物品/物资"等词但价格为数字时不被误当表头（回归：办公用品被丢行）', () => {
+    const { materials, skipped } = parseMaterialsCsv('办公用品,5,10\n签字笔,3,20')
+    expect(skipped).toBe(0)
+    expect(materials).toHaveLength(2)
+    expect(materials[0]).toMatchObject({ name: '办公用品', price: 5, quantity: 10 })
+  })
+
+  it('数量列带单位时提取前导整数（回归："10箱"被静默当作 1 件）', () => {
+    const { materials } = parseMaterialsCsv('名称,单价,数量\n矿泉水,2,10箱\n签字笔,3,5个\n本子,4,abc')
+    expect(materials.map((m) => m.quantity)).toEqual([10, 5, 1])
+  })
 })
 
 describe('parseMaterialsXlsx', () => {
@@ -116,8 +131,24 @@ describe('parseMaterialsXlsx', () => {
     expect(isZipBuffer(Buffer.from('名称,单价', 'utf-8'))).toBe(false)
   })
 
+  it('isExcelBuffer 同时识别 .xlsx(ZIP) 与 .xls(OLE2)（回归：.xls 被当 CSV 解析成乱码）', () => {
+    const ole2 = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1])
+    expect(isOle2Buffer(ole2)).toBe(true)
+    expect(isExcelBuffer(ole2)).toBe(true)
+    expect(isExcelBuffer(Buffer.from([0x50, 0x4b, 0x03, 0x04]))).toBe(true)
+    expect(isExcelBuffer(Buffer.from('名称,单价', 'utf-8'))).toBe(false)
+  })
+
   it('人员名单 xlsx：取第一列并跳过表头', () => {
     const ws = XLSX.utils.aoa_to_sheet([['姓名'], ['张三'], ['李四']])
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, '人员名单')
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer
+    expect(parsePeopleXlsx(buffer)).toEqual(['张三', '李四'])
+  })
+
+  it('人员名单 xlsx：前导空行后的"姓名"表头仍被跳过（回归：表头变成幽灵人员）', () => {
+    const ws = XLSX.utils.aoa_to_sheet([[''], ['姓名'], ['张三'], ['李四']])
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, '人员名单')
     const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer
@@ -199,6 +230,39 @@ describe('validateProject 项目校验', () => {
     expect(validateProject({})).toBeNull()
     expect(validateProject({ materials: [], people: 'x' })).toBeNull()
   })
+
+  it('超大 quantity 被钳制到 MAX_UNITS，校验不耗尽内存（回归：畸形文件 OOM 崩溃）', () => {
+    const start = Date.now()
+    const project = validateProject({
+      materials: [{ id: 'm1', name: '巨量', price: 1, quantity: 1e9 }],
+      people: [{ id: 'p1', name: '张三' }],
+      schemes: [{ id: 's1', name: '方案', createdAt: '', strategy: 'greedy', assignment: { 'm1#1': 'p1' } }],
+      activeSchemeId: 's1'
+    })
+    expect(Date.now() - start).toBeLessThan(2000)
+    expect(project!.materials[0].quantity).toBe(MAX_UNITS)
+    // 钳制后 m1#1 仍是合法件，assignment 保留
+    expect(project!.schemes[0].assignment).toEqual({ 'm1#1': 'p1' })
+  })
+
+  it('重复的物资 / 人员 id 被去重（保留首个有效者）', () => {
+    const project = validateProject({
+      materials: [
+        { id: 'm1', name: '本子', price: 5, quantity: 1 },
+        { id: 'm1', name: '重复本子', price: 9, quantity: 1 }
+      ],
+      people: [
+        { id: 'p1', name: '张三' },
+        { id: 'p1', name: '冒名张三' }
+      ],
+      schemes: [],
+      activeSchemeId: null
+    })
+    expect(project!.materials).toHaveLength(1)
+    expect(project!.materials[0].name).toBe('本子')
+    expect(project!.people).toHaveLength(1)
+    expect(project!.people[0].name).toBe('张三')
+  })
 })
 
 describe('buildPersonRows / buildPrintHtml / buildDetailCsv', () => {
@@ -234,6 +298,12 @@ describe('buildPersonRows / buildPrintHtml / buildDetailCsv', () => {
     expect(html).toContain('<!--FONT_INJECT-->')
     expect(html).not.toContain('李<四>')
     expect(html).toContain('李&lt;四&gt;')
+  })
+
+  it('打印 HTML：合计行货币符号也被转义（回归：自定义币种含 HTML 注入打印/PDF）', () => {
+    const html = buildPrintHtml({ title: 'T', remark: '', currency: '<b>', rows, generatedAt: 'x' })
+    expect(html).not.toContain('<b>')
+    expect(html).toContain('&lt;b&gt;')
   })
 
   it('CSV 明细：含表头与合计，逗号正确加引号', () => {

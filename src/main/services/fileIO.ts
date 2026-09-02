@@ -12,7 +12,7 @@ import {
 import { validateProject } from '@shared/validate'
 import {
   decodeBuffer,
-  isZipBuffer,
+  isExcelBuffer,
   parseMaterialsCsv,
   parseMaterialsXlsx,
   parsePeople,
@@ -52,7 +52,7 @@ function showSaveDialog(e: Electron.IpcMainInvokeEvent, options: Electron.SaveDi
   return parent ? dialog.showSaveDialog(parent, options) : dialog.showSaveDialog(options)
 }
 
-/** xlsx 魔数识别见 parse.ts 的 isZipBuffer */
+/** Excel 魔数识别见 parse.ts 的 isExcelBuffer（.xlsx=ZIP，.xls=OLE2） */
 
 /** 从磁盘读取项目文件（对话框与按路径打开共用） */
 function openProjectFile(file: string): OpenResult {
@@ -67,7 +67,7 @@ function openProjectFile(file: string): OpenResult {
 function importMaterialsFile(file: string): ImportMaterialsResult {
   try {
     const buffer = fs.readFileSync(file)
-    const parsed = isZipBuffer(buffer)
+    const parsed = isExcelBuffer(buffer)
       ? parseMaterialsXlsx(buffer)
       : parseMaterialsCsv(decodeBuffer(buffer))
     return { canceled: false, path: file, ...parsed }
@@ -80,7 +80,7 @@ function importMaterialsFile(file: string): ImportMaterialsResult {
 function importPeopleFile(file: string): ImportPeopleResult {
   try {
     const buffer = fs.readFileSync(file)
-    const names = isZipBuffer(buffer) ? parsePeopleXlsx(buffer) : parsePeople(decodeBuffer(buffer))
+    const names = isExcelBuffer(buffer) ? parsePeopleXlsx(buffer) : parsePeople(decodeBuffer(buffer))
     return { canceled: false, path: file, names }
   } catch (err) {
     return { canceled: false, path: file, names: [], error: (err as Error).message }

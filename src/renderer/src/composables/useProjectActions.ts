@@ -90,6 +90,8 @@ export function useProjectActions() {
       return
     }
     store.markSaved(res.path ?? store.filePath!)
+    // 已落盘：清除崩溃恢复草稿，避免下次启动误报「上次未正常关闭」
+    await window.api.saveDraft('')
     ElMessage.success('已保存')
   }
 
@@ -101,6 +103,8 @@ export function useProjectActions() {
       return
     }
     store.markSaved(res.path!)
+    // 已落盘：清除崩溃恢复草稿，避免下次启动误报「上次未正常关闭」
+    await window.api.saveDraft('')
     ElMessage.success(`已保存到：${res.path}`)
   }
 
@@ -187,12 +191,29 @@ export function useProjectActions() {
     return true
   }
 
+  /** 分给「已排除（不参与分配）」人员的件数：导出时会被省略，需提前告警 */
+  function excludedAssignedCount(): number {
+    const scheme = store.activeScheme
+    if (!scheme) return 0
+    const excluded = new Set(store.people.filter((p) => p.active === false).map((p) => p.id))
+    if (!excluded.size) return 0
+    return store.units.filter((u) => excluded.has(scheme.assignment[u.unitId])).length
+  }
+
   async function confirmStale(): Promise<boolean> {
-    if (!store.isStale) return true
-    const detail =
-      store.unassignedCount > 0
-        ? `当前方案还有 ${store.unassignedCount} 件物资未分配（或指向已删除的人员/物资），导出内容会小于实际库存。`
-        : '当前方案引用了已不存在的物资件，导出内容可能与当前物资清单不一致。'
+    const omitted = excludedAssignedCount()
+    if (!store.isStale && omitted === 0) return true
+    let detail: string
+    if (store.unassignedCount > 0) {
+      detail = `当前方案还有 ${store.unassignedCount} 件物资未分配（或指向已删除的人员/物资），导出内容会小于实际库存。`
+    } else if (store.isStale) {
+      detail = '当前方案引用了已不存在的物资件，导出内容可能与当前物资清单不一致。'
+    } else {
+      detail = ''
+    }
+    if (omitted > 0) {
+      detail += `另有 ${omitted} 件物资分给了已排除（不参与分配）的人员，导出时会被省略。`
+    }
     return ElMessageBox.confirm(`${detail}仍要继续导出吗？`, '提示', {
       confirmButtonText: '继续导出',
       cancelButtonText: '取消',

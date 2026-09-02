@@ -106,7 +106,7 @@ export function buildPrintHtml(input: PrintInput): string {
 
   const totalRow =
     `<tbody class="total-body"><tr class="total"><td class="c" colspan="4">合计（${rows.length} 人）</td>` +
-    `<td class="c">${unitCount}</td><td class="r">${currency}${fmt(grandTotal)}</td><td></td><td></td></tr></tbody>`
+    `<td class="c">${unitCount}</td><td class="r">${esc(currency)}${fmt(grandTotal)}</td><td></td><td></td></tr></tbody>`
 
   const tableHead =
     `<thead><tr><th>序号</th><th>姓名</th><th>物资名称</th><th>单价（${esc(currency)}）</th>` +

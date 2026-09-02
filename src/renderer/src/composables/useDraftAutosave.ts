@@ -21,6 +21,9 @@ export function useDraftAutosave(): void {
 
   const flush = () => {
     timer = null
+    // 仅在确有未保存修改时写崩溃恢复草稿；已保存则无需草稿，
+    // 也消除「保存后仍有待发定时器把草稿写回」的竞态
+    if (!store.dirty) return
     window.api.saveDraft(payload()).then((res) => {
       // 写失败不更新时间戳，状态栏就不会显示误导性的「已自动保存」
       if (!res?.ok) return
@@ -35,6 +38,9 @@ export function useDraftAutosave(): void {
       clearTimeout(timer)
       timer = null
     }
+    // 仅在有未保存修改时同步兜底写草稿；干净退出不写，避免下次启动误报「上次未正常关闭」。
+    // 不 dirty 时也不主动清草稿，以保留「新建时确认丢弃但草稿仍保留」的既有语义。
+    if (!store.dirty) return
     // 同步兜底保存：invoke 在窗口卸载时可能来不及送达，这里必须阻塞
     try {
       window.api.saveDraftSync(payload())

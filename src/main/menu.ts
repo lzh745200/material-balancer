@@ -30,7 +30,14 @@ export function buildAppMenu(win: BrowserWindow): void {
       label: '编辑',
       submenu: [
         { label: '撤销', click: send('undo') },
-        { label: '重做', click: send('redo') }
+        { label: '重做', click: send('redo') },
+        { type: 'separator' },
+        // 标准编辑 role：注册 Ctrl+X/C/V/A 加速键，保证输入框（物资名/姓名/标题/备注）
+        // 在打包版仍能剪切/复制/粘贴/全选（自定义菜单会覆盖 Chromium 默认的编辑加速键）
+        { role: 'cut', label: '剪切' },
+        { role: 'copy', label: '复制' },
+        { role: 'paste', label: '粘贴' },
+        { role: 'selectAll', label: '全选' }
       ]
     },
     {

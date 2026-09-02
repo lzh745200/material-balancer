@@ -404,3 +404,97 @@ describe('分配方案', () => {
     expect(store.randomSeed).toBeNull()
   })
 })
+
+describe('未保存标志 dirty（回归：此前常规编辑不置位，关窗保护/丢弃确认失效）', () => {
+  it('增物资/人员、生成方案、拖拽、改设置都标记 dirty；保存后复位', () => {
+    const store = useProjectStore()
+    expect(store.dirty).toBe(false)
+
+    store.addMaterial('A', 5, 2)
+    expect(store.dirty).toBe(true)
+    store.markSaved('C:/tmp/a.mproj')
+    expect(store.dirty).toBe(false)
+
+    store.addPerson('张三')
+    store.addPerson('李四')
+    expect(store.dirty).toBe(true)
+    store.markSaved('C:/tmp/a.mproj')
+    expect(store.dirty).toBe(false)
+
+    store.generateAllocation('greedy')
+    expect(store.dirty).toBe(true)
+    store.markSaved('C:/tmp/a.mproj')
+    expect(store.dirty).toBe(false)
+
+    store.updateSettings({ title: '新标题' })
+    expect(store.dirty).toBe(true)
+    store.markSaved('C:/tmp/a.mproj')
+    expect(store.dirty).toBe(false)
+
+    store.moveUnit(store.units[0].unitId, null)
+    expect(store.dirty).toBe(true)
+  })
+
+  it('newProject / loadProject 重置 dirty 为 false', () => {
+    const store = useProjectStore()
+    store.addMaterial('A', 5, 1)
+    expect(store.dirty).toBe(true)
+    store.newProject()
+    expect(store.dirty).toBe(false)
+
+    store.addMaterial('B', 3, 1)
+    const data = store.exportProject()
+    store.loadProject(data, 'C:/tmp/b.mproj')
+    expect(store.dirty).toBe(false)
+  })
+})
+
+describe('moveUnit 未分配池 ↔ 人员（回归：池中的件无法拖回人员）', () => {
+  it('把件拖到未分配池后可再拖回指定人员', () => {
+    const store = useProjectStore()
+    store.addMaterial('A', 5, 1)
+    store.addPerson('张三')
+    store.addPerson('李四')
+    store.generateAllocation('greedy')
+    const unitId = store.units[0].unitId
+    const owner = store.activeAssignment[unitId]
+    expect(owner).toBeTruthy()
+
+    store.moveUnit(unitId, null)
+    expect(store.activeAssignment[unitId]).toBeUndefined()
+    expect(store.unassignedCount).toBe(1)
+
+    const target = store.people.find((p) => p.id !== owner)!.id
+    store.moveUnit(unitId, target)
+    expect(store.activeAssignment[unitId]).toBe(target)
+    expect(store.unassignedCount).toBe(0)
+  })
+
+  it('允许剩余模式下，池中的剩余件可手动分配给人员', () => {
+    const store = useProjectStore()
+    store.addMaterial('贵重物', 90, 1)
+    store.addMaterial('小件', 1, 10)
+    store.addPerson('张三')
+    store.addPerson('李四')
+    store.setAlgoPrefs({ allowSurplus: true })
+    store.generateAllocation('greedy')
+    const surplusUnit = store.units.find((u) => u.name === '贵重物')!.unitId
+    expect(store.activeAssignment[surplusUnit]).toBeUndefined()
+
+    store.moveUnit(surplusUnit, store.people[0].id)
+    expect(store.activeAssignment[surplusUnit]).toBe(store.people[0].id)
+  })
+
+  it('移动到当前归属者本人是 no-op（不产生历史记录）', () => {
+    const store = useProjectStore()
+    store.addMaterial('A', 5, 1)
+    store.addPerson('张三')
+    store.generateAllocation('greedy')
+    const unitId = store.units[0].unitId
+    const owner = store.activeAssignment[unitId]
+    const historyBefore = store.past.length
+    store.moveUnit(unitId, owner)
+    expect(store.past.length).toBe(historyBefore)
+    expect(store.activeAssignment[unitId]).toBe(owner)
+  })
+})

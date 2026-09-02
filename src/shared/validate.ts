@@ -1,4 +1,5 @@
 import type { AllocationScheme, Person, ProjectFile, Strategy } from './types'
+import { MAX_UNITS } from './types'
 
 /**
  * 项目文件运行时校验与归一化（纯函数，主进程与渲染层共用）。
@@ -10,10 +11,11 @@ import type { AllocationScheme, Person, ProjectFile, Strategy } from './types'
 
 export const DEFAULT_TITLE = '物资分配领取表'
 
-/** 拆分件数口径（与 expandUnits 一致）：数量取整且至少 1 件 */
+/** 拆分件数口径（与 expandUnits 一致）：数量取整、至少 1 件，且钳制到 MAX_UNITS 防止畸形文件耗尽内存 */
 export function quantityUnits(quantity: unknown): number {
   const n = Math.floor(Number(quantity))
-  return Number.isFinite(n) && n >= 1 ? n : 1
+  if (!Number.isFinite(n) || n < 1) return 1
+  return Math.min(n, MAX_UNITS)
 }
 
 const VALID_STRATEGIES: readonly Strategy[] = ['greedy', 'optimized', 'random', 'manual']
@@ -23,27 +25,39 @@ export function validateProject(raw: unknown): ProjectFile | null {
   const o = raw as Record<string, unknown>
   if (!Array.isArray(o.materials) || !Array.isArray(o.people)) return null
 
+  const seenMaterialIds = new Set<string>()
   const materials = (o.materials as unknown[]).flatMap((m): MaterialLike[] => {
     if (typeof m !== 'object' || m === null) return []
     const x = m as Record<string, unknown>
     if (typeof x.id !== 'string' || !x.id) return []
+    if (seenMaterialIds.has(x.id)) return []
     if (typeof x.name !== 'string' || !x.name.trim()) return []
     const price = Number(x.price)
     if (!Number.isFinite(price) || price <= 0) return []
+    seenMaterialIds.add(x.id)
     return [{ id: x.id, name: x.name, price, quantity: quantityUnits(x.quantity) }]
   })
+  const seenPersonIds = new Set<string>()
   const people = (o.people as unknown[]).flatMap((p): Person[] => {
     if (typeof p !== 'object' || p === null) return []
     const x = p as Record<string, unknown>
     if (typeof x.id !== 'string' || !x.id || typeof x.name !== 'string' || !x.name.trim()) return []
+    if (seenPersonIds.has(x.id)) return []
+    seenPersonIds.add(x.id)
     return [{ id: x.id, name: x.name, active: x.active !== false }]
   })
 
   const validPersonIds = new Set(people.map((p) => p.id))
-  // 合法拆分件 id 集合：materiaId#k（k ≤ 数量），幽灵引用在载入时即剔除
+  // 合法拆分件 id 集合：materiaId#k（k ≤ 数量），幽灵引用在载入时即剔除。
+  // 总件数预算 MAX_UNITS：运行时 units getter 本就在此上限截断，超出部分的引用一律视为无效，
+  // 同时防止畸形文件（超大 quantity × 多物资）在此处构建出海量集合耗尽内存。
   const validUnitIds = new Set<string>()
+  let unitBudget = MAX_UNITS
   for (const m of materials) {
-    for (let k = 1; k <= m.quantity; k++) validUnitIds.add(`${m.id}#${k}`)
+    for (let k = 1; k <= m.quantity && unitBudget > 0; k++, unitBudget--) {
+      validUnitIds.add(`${m.id}#${k}`)
+    }
+    if (unitBudget <= 0) break
   }
   const schemes = Array.isArray(o.schemes)
     ? (o.schemes as unknown[]).flatMap((s): AllocationScheme[] => {

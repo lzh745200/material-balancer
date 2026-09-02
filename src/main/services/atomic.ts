@@ -10,7 +10,14 @@ export function atomicWriteFileSync(file: string, content: string): void {
   fs.mkdirSync(dir, { recursive: true })
   const tmp = path.join(dir, `.${path.basename(file)}.${process.pid}.${Date.now()}.tmp`)
   try {
-    fs.writeFileSync(tmp, content, 'utf-8')
+    const fd = fs.openSync(tmp, 'w')
+    try {
+      fs.writeFileSync(fd, content, 'utf-8')
+      // 落盘后再改名：断电时不会留下 0 字节 / 截断的目标文件
+      fs.fsyncSync(fd)
+    } finally {
+      fs.closeSync(fd)
+    }
     fs.renameSync(tmp, file)
   } finally {
     try {

@@ -226,6 +226,9 @@ export const useProjectStore = defineStore('project', {
       this.past.push(this.snapshot())
       if (this.past.length > HISTORY_LIMIT) this.past.shift()
       this.future = []
+      // 一切可撤销的前向修改都经此记录快照，统一在此标记「有未保存修改」，
+      // 驱动关窗确认、状态栏「● 未保存」与新建/打开前的丢弃确认。
+      this.dirty = true
     },
 
     restore(snap: Snapshot): void {
@@ -479,21 +482,23 @@ export const useProjectStore = defineStore('project', {
     moveUnit(unitId: string, toPersonId: string | null): void {
       const scheme = this.activeScheme
       if (!scheme || !unitId) return
-      if (!(unitId in scheme.assignment)) return
+      // 件必须当前存在，防止幽灵引用在方案里继续存活
+      if (!this.unitMap.has(unitId)) return
       if (toPersonId === null) {
+        // 取消分配（拖回未分配池）：仅当该件当前确实在分配中才有意义
+        if (!(unitId in scheme.assignment)) return
         this.pushHistory()
         delete scheme.assignment[unitId]
-        if (scheme.strategy !== 'manual') scheme.strategy = 'manual'
+        scheme.strategy = 'manual'
         return
       }
-      if (!toPersonId) return
-      if (!this.unitMap.has(unitId)) return
       if (!this.people.some((p) => p.id === toPersonId)) return
+      // from 为 undefined 表示该件来自未分配池，允许直接分配给某人
       const from = scheme.assignment[unitId]
-      if (!from || from === toPersonId) return
+      if (from === toPersonId) return
       this.pushHistory()
       scheme.assignment[unitId] = toPersonId
-      if (scheme.strategy !== 'manual') scheme.strategy = 'manual'
+      scheme.strategy = 'manual'
     },
 
     clearActiveScheme(): void {

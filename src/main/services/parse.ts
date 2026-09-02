@@ -66,6 +66,15 @@ function toNumber(cell: unknown): number {
   return Number.isFinite(n) ? n : NaN
 }
 
+/** 取开头的整数（全角数字先转半角）：数量列带单位（"10箱"/"5个"）时提取件数 */
+function leadingInteger(cell: unknown): number {
+  const s = String(cell ?? '')
+    .replace(/[\uFF10-\uFF19]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
+    .trim()
+  const m = /^\d+/.exec(s)
+  return m ? Number(m[0]) : NaN
+}
+
 /** 把二维行数组解析为物资列表（CSV 与 XLSX 共用） */
 export function parseMaterialRows(rows: unknown[][]): ParseMaterialsResult {
   const materials: Material[] = []
@@ -80,12 +89,14 @@ export function parseMaterialRows(rows: unknown[][]): ParseMaterialsResult {
 
   const cols = detectColumns(rows[first])
   const nameCell = String(rows[first][cols.name] ?? '').trim()
+  // 表头行的价格列必为文字（单价/价格），数据行的价格列是数字；
+  // 仅凭名称含「物品/物资/name」等词不足以判定表头（如首条物资名「办公用品」）
+  const priceIsNumeric = !Number.isNaN(toNumber(rows[first][cols.price]))
   const keywordHeader =
-    HEADER_NAME.test(nameCell) ||
-    HEADER_PRICE_STRICT.test(nameCell) ||
-    HEADER_QTY.test(nameCell)
+    !priceIsNumeric &&
+    (HEADER_NAME.test(nameCell) || HEADER_PRICE_STRICT.test(nameCell) || HEADER_QTY.test(nameCell))
   // 名称非空且价格列不可解析 → 疑似表头
-  const ambiguousHeader = nameCell !== '' && Number.isNaN(toNumber(rows[first][cols.price]))
+  const ambiguousHeader = nameCell !== '' && !priceIsNumeric
   const startRow = keywordHeader || ambiguousHeader ? first + 1 : first
   // 首行被当表头但没命中任何关键词时无法区分「表头」与「首条数据」，
   // 计入 skipped，保证行数守恒、不静默丢行
@@ -106,7 +117,9 @@ export function parseMaterialRows(rows: unknown[][]): ParseMaterialsResult {
     const rawQty = row[cols.qty] === undefined || cols.qty === -1 ? '' : String(row[cols.qty]).trim()
     let quantity = 1
     if (rawQty !== '') {
-      const q = Math.floor(toNumber(rawQty))
+      let q = Math.floor(toNumber(rawQty))
+      // 带单位的数量（"10箱"）toNumber 得 NaN，回退取开头整数，避免静默按 1 件处理
+      if (!Number.isFinite(q) || q < 1) q = leadingInteger(rawQty)
       quantity = Number.isFinite(q) && q >= 1 ? q : 1
     }
     materials.push({ id: `imp-${randomUUID()}`, name, price, quantity })
@@ -130,6 +143,22 @@ export function isZipBuffer(buffer: Buffer): boolean {
   return (
     buffer.length >= 4 && buffer[0] === 0x50 && buffer[1] === 0x4b && [3, 5, 7].includes(buffer[2])
   )
+}
+
+/** 旧版 .xls 是 OLE2 复合文档（魔数 D0 CF 11 E0），SheetJS 的 XLSX.read 同样能解析（BIFF） */
+export function isOle2Buffer(buffer: Buffer): boolean {
+  return (
+    buffer.length >= 4 &&
+    buffer[0] === 0xd0 &&
+    buffer[1] === 0xcf &&
+    buffer[2] === 0x11 &&
+    buffer[3] === 0xe0
+  )
+}
+
+/** 是否应按 Excel 解析（.xlsx 走 ZIP，.xls 走 OLE2）；否则按文本/CSV 解码 */
+export function isExcelBuffer(buffer: Buffer): boolean {
+  return isZipBuffer(buffer) || isOle2Buffer(buffer)
 }
 
 export function parseMaterialsXlsx(buffer: Buffer): ParseMaterialsResult {
@@ -174,10 +203,16 @@ export function parsePeopleXlsx(buffer: Buffer): string[] {
 function namesFromFirstColumn(cells: string[]): string[] {
   const names: string[] = []
   const seen = new Set<string>()
-  for (const [i, raw] of cells.entries()) {
+  let headerChecked = false
+  for (const raw of cells) {
     const name = raw.trim()
-    if (i === 0 && PEOPLE_HEADER.test(name)) continue
-    if (!name || seen.has(name)) continue
+    if (!name) continue
+    // 对首个非空单元格判定表头（XLSX 可能有前导空行，不能只看下标 0）
+    if (!headerChecked) {
+      headerChecked = true
+      if (PEOPLE_HEADER.test(name)) continue
+    }
+    if (seen.has(name)) continue
     seen.add(name)
     names.push(name)
   }
