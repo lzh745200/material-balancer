@@ -3,9 +3,10 @@
 将一份物资清单（名称 + 单价 + 数量）尽可能公平地分配给若干人员，并生成可打印的 A4 签字表格。
 **完全离线运行**，支持 **Windows x64** 与 **麒麟 V10 / Linux ARM64**。
 
-> 📖 第一次接触本项目？推荐阅读 [docs/项目文件结构说明.md](docs/项目文件结构说明.md)——
-> 用大白话讲解每个目录的职责、数据流动方式与「改哪儿」速查表。
-> 另有 [docs/系统介绍.pptx](docs/系统介绍.pptx) 演示文稿（43 页）可完整了解系统。
+> 📚 文档导航：
+> [使用手册](docs/使用手册.md)（安装 / 上手 / 功能 / FAQ，面向使用者）·
+> [项目文件结构说明](docs/项目文件结构说明.md)（大白话讲解每个目录职责与「改哪儿」速查表）·
+> [系统介绍 PPT](docs/系统介绍.pptx)（44 页演示文稿，可用 `npm run ppt` 重新生成）。
 
 
 ## 功能特性
@@ -54,10 +55,11 @@
 ```bash
 npm install        # 安装依赖（.npmrc 已配置 Electron 国内镜像）
 npm run dev        # 开发模式（热更新）
-npm test           # 运行单元 + 组件测试
+npm test           # 运行 98 个单元 + 组件测试
 npm run lint       # ESLint 检查
 npm run typecheck  # TypeScript 类型检查
 npm run build      # 构建产物到 out/
+npm run ppt        # 重新生成 docs/系统介绍.pptx（44 页）
 ```
 
 Node.js ≥ 18（CI 使用 20，见 `.nvmrc`）。
@@ -118,9 +120,10 @@ PDF / 打印所需中文字体已随包内置，不依赖系统字体。实测�
 ```
 ├─ .github/workflows/build.yml   # CI：质量门禁（lint+typecheck+test）→ 双平台构建 → tag 发 Release
 ├─ electron-builder.yml          # 打包配置（nsis/portable + deb/tar.gz）
-├─ build/                        # 应用图标（icon.ico / icon.png）
+├─ build/                        # 应用图标 + 打包钩子（麒麟沙箱修复）+ install.sh 一键安装
+├─ docs/                         # 使用手册 / 项目文件结构说明 / 系统介绍 PPT
 ├─ resources/fonts/              # 打印模板内置中文字体
-├─ scripts/gen-icons.mjs         # 图标生成脚本（纯 Node，无依赖）
+├─ scripts/                      # gen-icons（图标）/ build-ppt（重新生成介绍 PPT）
 ├─ src/
 │  ├─ shared/                    # 数据模型 + IPC 通道 + 项目校验（主/渲染共享）
 │  ├─ main/                      # 主进程：窗口、菜单、文件IO、导入解析、草稿、最近文件、PDF/打印

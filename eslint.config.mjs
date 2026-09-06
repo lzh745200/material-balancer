@@ -52,8 +52,8 @@ export default tseslint.config(
     rules: { 'no-console': 'off' }
   },
   {
-    // electron-builder 打包钩子：CJS 形式，Node 全局
-    files: ['build/**/*.cjs'],
+    // electron-builder 打包钩子与 PPT 生成脚本：CJS 形式，Node 全局
+    files: ['build/**/*.cjs', 'scripts/**/*.cjs'],
     languageOptions: { globals: { ...globals.node, ...globals.es2022 } },
     rules: {
       'no-console': 'off',
