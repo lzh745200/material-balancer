@@ -22,7 +22,7 @@ import MaterialPanel from './components/MaterialPanel.vue'
 import PersonPanel from './components/PersonPanel.vue'
 import ResultPanel from './components/ResultPanel.vue'
 import StatusBar from './components/StatusBar.vue'
-import { useProjectStore } from './stores/project'
+import { useProjectStore, DEFAULT_TITLE } from './stores/project'
 import { useDraftAutosave } from './composables/useDraftAutosave'
 import { useShortcuts } from './composables/useShortcuts'
 import { dispatchMenuAction, useProjectActions } from './composables/useProjectActions'
@@ -61,7 +61,15 @@ onMounted(async () => {
   try {
     const draft = await window.api.loadDraft()
     if (!draft) return
-    let parsed: { version?: number; materials?: unknown[]; people?: unknown[] }
+    let parsed: {
+      version?: number
+      title?: string
+      remark?: string
+      currency?: string
+      materials?: unknown[]
+      people?: unknown[]
+      schemes?: unknown[]
+    }
     try {
       parsed = JSON.parse(draft)
     } catch {
@@ -69,9 +77,26 @@ onMounted(async () => {
       ElMessage.warning('本地草稿已损坏，无法恢复')
       return
     }
-    if (parsed?.version !== 1 || !Array.isArray(parsed.materials)) return
-    const hasContent = parsed.materials.length > 0 || (parsed.people?.length ?? 0) > 0
-    if (!hasContent) return
+    if (
+      parsed?.version !== 1 ||
+      !Array.isArray(parsed.materials) ||
+      !Array.isArray(parsed.people)
+    ) {
+      await window.api.saveDraft('').catch(() => undefined)
+      return
+    }
+    // 仅改标题/备注/方案同样是有价值的草稿；空草稿清理掉，避免长期残留
+    const hasContent =
+      parsed.materials.length > 0 ||
+      parsed.people.length > 0 ||
+      (parsed.schemes?.length ?? 0) > 0 ||
+      (typeof parsed.title === 'string' && parsed.title.trim() !== '' && parsed.title !== DEFAULT_TITLE) ||
+      (typeof parsed.remark === 'string' && parsed.remark.trim() !== '') ||
+      (typeof parsed.currency === 'string' && parsed.currency !== '' && parsed.currency !== '¥')
+    if (!hasContent) {
+      await window.api.saveDraft('').catch(() => undefined)
+      return
+    }
 
     const action = await ElMessageBox.confirm(
       '检测到上次未正常关闭时留下的草稿，是否恢复？',

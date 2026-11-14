@@ -63,6 +63,21 @@ describe('物资 / 人员管理', () => {
     expect(() => store.addPerson('')).toThrow()
   })
 
+  it('批量导入人员执行去空、去重和 200 人上限，超限时不产生部分导入', () => {
+    const store = useProjectStore()
+    store.addImportedPeople(Array.from({ length: 200 }, (_, i) => `人员${i + 1}`))
+    const before = store.snapshot()
+    const history = store.past.length
+    expect(() => store.addImportedPeople(['  ', '人员1', '新人员'])).toThrow(/200/)
+    expect(store.snapshot()).toEqual(before)
+    expect(store.past).toHaveLength(history)
+
+    const empty = useProjectStore()
+    empty.newProject()
+    empty.addImportedPeople([' 张三 ', '张三', '', '李四'])
+    expect(empty.people.map((p) => p.name)).toEqual(['张三', '李四'])
+  })
+
   it('物资数量 / 单价非法输入被拒绝', () => {
     const store = useProjectStore()
     expect(() => store.addMaterial('', 1, 1)).toThrow(/名称/)
@@ -98,6 +113,25 @@ describe('物资 / 人员管理', () => {
     store.addMaterial('A', 2.5, 2.9) // → 2 件
     expect(store.unitCount).toBe(2)
     expect(store.totalValue).toBe(5) // 2.5 × 2
+  })
+
+  it('编辑物资名称为空白时拒绝且不产生历史记录', () => {
+    const store = useProjectStore()
+    store.addMaterial('A', 1, 1)
+    const before = store.snapshot()
+    const history = store.past.length
+    expect(() => store.updateMaterial(store.materials[0].id, { name: '  ' })).toThrow(/名称/)
+    expect(store.snapshot()).toEqual(before)
+    expect(store.past).toHaveLength(history)
+  })
+
+  it('搜索筛选后按可见相邻项交换排序，不改变隐藏项的相对位置', () => {
+    const store = useProjectStore()
+    store.addMaterial('A-相同', 1, 1)
+    store.addMaterial('隐藏项', 1, 1)
+    store.addMaterial('C-相同', 1, 1)
+    store.moveMaterialTo(store.materials[0].id, store.materials[2].id)
+    expect(store.materials.map((m) => m.name)).toEqual(['C-相同', '隐藏项', 'A-相同'])
   })
 })
 
@@ -378,6 +412,42 @@ describe('分配方案', () => {
     expect(store.activeScheme!.lockedUnits).toBeUndefined()
   })
 
+  it('清空当前方案时同时清除锁定标记', () => {
+    const store = useProjectStore()
+    store.addMaterial('A', 3, 1)
+    store.addPerson('张三')
+    store.addPerson('李四')
+    store.generateAllocation('greedy')
+    store.toggleUnitLock(store.units[0].unitId)
+    store.clearActiveScheme()
+    expect(store.activeAssignment).toEqual({})
+    expect(store.activeScheme!.lockedUnits).toBeUndefined()
+  })
+
+  it('方案已最优时重新优化不产生空历史与脏标记', () => {
+    const store = useProjectStore()
+    for (const [name, price] of [
+      ['A', 6],
+      ['B', 5],
+      ['C', 4],
+      ['D', 3],
+      ['E', 2],
+      ['F', 1]
+    ] as const) {
+      store.addMaterial(name, price, 1)
+    }
+    store.addPerson('张三')
+    store.addPerson('李四')
+    store.addPerson('王五')
+    store.generateAllocation('optimized')
+    expect(store.stats!.diff).toBe(0)
+    store.markSaved('C:/tmp/optimal.mproj')
+    const history = store.past.length
+    store.reoptimizeCurrent()
+    expect(store.past).toHaveLength(history)
+    expect(store.dirty).toBe(false)
+  })
+
   it('允许剩余模式：超人均的件留在未分配池', () => {
     const store = useProjectStore()
     store.addMaterial('贵重物', 90, 1)
@@ -394,12 +464,19 @@ describe('分配方案', () => {
     expect(store.activeScheme!.strategy).toBe('greedy')
   })
 
-  it('setAlgoPrefs 会钳制非法参数', () => {
+  it('setAlgoPrefs 会钳制非法参数并拒绝 NaN 污染', () => {
     const store = useProjectStore()
     store.setAlgoPrefs({ optimizeMaxPasses: -5, randomRestarts: 999, randomSeed: 42 })
     expect(store.optimizeMaxPasses).toBe(1)
     expect(store.randomRestarts).toBe(100)
     expect(store.randomSeed).toBe(42)
+    store.setAlgoPrefs({ optimizeMaxPasses: Number.NaN, randomRestarts: Number.NaN })
+    expect(store.optimizeMaxPasses).toBe(1)
+    expect(store.randomRestarts).toBe(100)
+    store.setAlgoPrefs({ randomSeed: Number.NaN })
+    expect(store.randomSeed).toBeNull()
+    store.setAlgoPrefs({ randomSeed: 0 })
+    expect(store.randomSeed).toBe(1)
     store.setAlgoPrefs({ randomSeed: null })
     expect(store.randomSeed).toBeNull()
   })

@@ -19,11 +19,15 @@ export function quantityUnits(quantity: unknown): number {
 }
 
 const VALID_STRATEGIES: readonly Strategy[] = ['greedy', 'optimized', 'random', 'manual']
+const MAX_PEOPLE = 200
+const MAX_SCHEMES = 30
 
 export function validateProject(raw: unknown): ProjectFile | null {
   if (typeof raw !== 'object' || raw === null) return null
   const o = raw as Record<string, unknown>
   if (!Array.isArray(o.materials) || !Array.isArray(o.people)) return null
+  if (o.materials.length > MAX_UNITS || o.people.length > MAX_PEOPLE) return null
+  if (Array.isArray(o.schemes) && o.schemes.length > MAX_SCHEMES) return null
 
   const seenMaterialIds = new Set<string>()
   const materials = (o.materials as unknown[]).flatMap((m): MaterialLike[] => {
@@ -59,28 +63,34 @@ export function validateProject(raw: unknown): ProjectFile | null {
     }
     if (unitBudget <= 0) break
   }
+  const seenSchemeIds = new Set<string>()
   const schemes = Array.isArray(o.schemes)
     ? (o.schemes as unknown[]).flatMap((s): AllocationScheme[] => {
         if (typeof s !== 'object' || s === null) return []
         const x = s as Record<string, unknown>
         // 注意 typeof null === 'object'，必须显式排除 null
-        if (typeof x.id !== 'string' || !x.id) return []
+        if (typeof x.id !== 'string' || !x.id || seenSchemeIds.has(x.id)) return []
         if (x.assignment === null || typeof x.assignment !== 'object') return []
         const assignment: Record<string, string> = {}
-        for (const [unitId, personId] of Object.entries(x.assignment as Record<string, unknown>)) {
+        // 合法件最多 MAX_UNITS；超过说明文件结构异常，整条方案拒绝而不是部分载入
+        const entries = Object.entries(x.assignment as Record<string, unknown>)
+        if (entries.length > MAX_UNITS) return []
+        for (const [unitId, personId] of entries) {
           if (typeof unitId !== 'string' || !validUnitIds.has(unitId)) continue
           if (typeof personId !== 'string' || !validPersonIds.has(personId)) continue
           assignment[unitId] = personId
         }
-        const lockedUnits = Array.isArray(x.lockedUnits)
-          ? [
-              ...new Set(
-                (x.lockedUnits as unknown[]).filter(
-                  (u): u is string => typeof u === 'string' && validUnitIds.has(u)
+        const lockedUnits =
+          Array.isArray(x.lockedUnits) && x.lockedUnits.length <= MAX_UNITS
+            ? [
+                ...new Set(
+                  (x.lockedUnits as unknown[]).filter(
+                    (u): u is string => typeof u === 'string' && validUnitIds.has(u)
+                  )
                 )
-              )
-            ]
-          : []
+              ]
+            : []
+        seenSchemeIds.add(x.id)
         return [
           {
             id: x.id,

@@ -12,6 +12,9 @@ afterPack: build/afterPack.cjs
 # electron-vite 构建产物（主进程已把纯 JS 依赖打包进 out，无需携带 node_modules）
 files:
   - out/**
+  - package.json
+  # 所有依赖均已由 electron-vite 打入 out，重复携带生产依赖只会增大安装包
+  - '!node_modules/**'
 
 asar: true
 

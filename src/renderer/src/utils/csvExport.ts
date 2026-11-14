@@ -7,7 +7,7 @@ import type { PersonRow } from '@/print/rows'
  */
 function cell(v: string | number): string {
   const s = String(v)
-  const guarded = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s
+  const guarded = /^(?:\s*[=+\-@]|[\t\r])/.test(s) ? `'${s}` : s
   return /[",\n\r]/.test(guarded) ? `"${guarded.replace(/"/g, '""')}"` : guarded
 }
 

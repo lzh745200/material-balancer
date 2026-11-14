@@ -176,28 +176,46 @@ export function parseMaterialsXlsx(buffer: Buffer): ParseMaterialsResult {
   return fallback ?? { materials: [], skipped: 0, warnings: [] }
 }
 
+export interface ParsePeopleResult {
+  names: string[]
+  warnings: string[]
+}
+
 /**
  * 人员名单解析：每行一个姓名；兼容 CSV（取第一列）。
  * 自动去除空行、首尾空白与重复姓名；首列表头（姓名/Name 等）自动跳过。
+ * 引号未闭合等结构错误会阻止导入，避免把多行合并成一个错误姓名。
  */
-export function parsePeople(text: string): string[] {
+export function parsePeople(text: string): ParsePeopleResult {
   const parsed = Papa.parse<unknown[]>(text.replace(/^\uFEFF/, ''), {
     skipEmptyLines: 'greedy'
   })
-  return namesFromFirstColumn(parsed.data.map((row) => String(row?.[0] ?? '')))
+  const warnings = [
+    ...new Set(
+      parsed.errors
+        .filter((e) => e.type === 'Quotes')
+        .map((e) => String(e.message ?? ''))
+        .filter(Boolean)
+    )
+  ]
+  if (warnings.length) return { names: [], warnings }
+  return {
+    names: namesFromFirstColumn(parsed.data.map((row) => String(row?.[0] ?? ''))),
+    warnings: []
+  }
 }
 
 /** 人员名单 XLSX：取第一个含数据的 sheet 的第一列 */
-export function parsePeopleXlsx(buffer: Buffer): string[] {
+export function parsePeopleXlsx(buffer: Buffer): ParsePeopleResult {
   const wb = XLSX.read(buffer, { type: 'buffer' })
   for (const sheetName of wb.SheetNames) {
     const sheet = wb.Sheets[sheetName]
     if (!sheet) continue
     const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '' })
     const names = namesFromFirstColumn(rows.map((row) => String(row?.[0] ?? '')))
-    if (names.length) return names
+    if (names.length) return { names, warnings: [] }
   }
-  return []
+  return { names: [], warnings: [] }
 }
 
 function namesFromFirstColumn(cells: string[]): string[] {

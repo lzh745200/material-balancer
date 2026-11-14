@@ -29,11 +29,38 @@ const PROJECT_FILTERS = [
   { name: '所有文件', extensions: ['*'] }
 ]
 
+/** 导入 / 打开文件的大小上限：在 JSON.parse、XLSX.read 前拒绝，避免主进程 OOM 或无响应 */
+const MAX_INPUT_FILE_BYTES = 25 * 1024 * 1024
+
+async function readFileLimited(file: string): Promise<Buffer> {
+  const stat = await fs.promises.stat(file)
+  if (!stat.isFile()) throw new Error('所选路径不是文件')
+  if (stat.size > MAX_INPUT_FILE_BYTES) {
+    throw new Error(
+      `文件过大（${(stat.size / 1024 / 1024).toFixed(1)} MB），上限为 ${MAX_INPUT_FILE_BYTES / 1024 / 1024} MB`
+    )
+  }
+  const buffer = await fs.promises.readFile(file)
+  if (buffer.length > MAX_INPUT_FILE_BYTES) throw new Error('文件读取期间增大，已停止处理')
+  return buffer
+}
+
+type SenderGuard = (event: { sender: Electron.WebContents }) => boolean
+
+/** 覆盖已有项目前保留上一版；备份失败不阻塞主保存，但写入仍走原子路径 */
+function backupExisting(file: string): void {
+  try {
+    if (fs.existsSync(file)) fs.copyFileSync(file, `${file}.bak`)
+  } catch {
+    // 备份是尽力而为，原子写负责目标文件完整性
+  }
+}
+
 /** 项目文件运行时校验见 @shared/validate（与渲染层 loadProject 共用同一实现） */
 
-function readJsonProject(file: string): ProjectFile {
-  const buf = fs.readFileSync(file)
-  const data = JSON.parse(decodeBuffer(buf))
+async function readJsonProject(file: string): Promise<ProjectFile> {
+  const buf = await readFileLimited(file)
+  const data: unknown = JSON.parse(decodeBuffer(buf))
   const project = validateProject(data)
   if (!project) throw new Error('文件格式不正确：不是有效的物资分配项目文件')
   return project
@@ -55,18 +82,18 @@ function showSaveDialog(e: Electron.IpcMainInvokeEvent, options: Electron.SaveDi
 /** Excel 魔数识别见 parse.ts 的 isExcelBuffer（.xlsx=ZIP，.xls=OLE2） */
 
 /** 从磁盘读取项目文件（对话框与按路径打开共用） */
-function openProjectFile(file: string): OpenResult {
+async function openProjectFile(file: string): Promise<OpenResult> {
   try {
-    return { canceled: false, path: file, data: readJsonProject(file) }
+    return { canceled: false, path: file, data: await readJsonProject(file) }
   } catch (err) {
     return { canceled: false, path: file, error: (err as Error).message }
   }
 }
 
 /** 从磁盘解析物资表（对话框与拖拽导入共用） */
-function importMaterialsFile(file: string): ImportMaterialsResult {
+async function importMaterialsFile(file: string): Promise<ImportMaterialsResult> {
   try {
-    const buffer = fs.readFileSync(file)
+    const buffer = await readFileLimited(file)
     const parsed = isExcelBuffer(buffer)
       ? parseMaterialsXlsx(buffer)
       : parseMaterialsCsv(decodeBuffer(buffer))
@@ -77,36 +104,48 @@ function importMaterialsFile(file: string): ImportMaterialsResult {
 }
 
 /** 从磁盘解析人员名单（对话框与拖拽导入共用；xlsx 取第一列） */
-function importPeopleFile(file: string): ImportPeopleResult {
+async function importPeopleFile(file: string): Promise<ImportPeopleResult> {
   try {
-    const buffer = fs.readFileSync(file)
-    const names = isExcelBuffer(buffer) ? parsePeopleXlsx(buffer) : parsePeople(decodeBuffer(buffer))
-    return { canceled: false, path: file, names }
+    const buffer = await readFileLimited(file)
+    const parsed = isExcelBuffer(buffer)
+      ? parsePeopleXlsx(buffer)
+      : parsePeople(decodeBuffer(buffer))
+    return { canceled: false, path: file, ...parsed }
   } catch (err) {
     return { canceled: false, path: file, names: [], error: (err as Error).message }
   }
 }
 
-export function registerIpcHandlers(): void {
-  ipcMain.handle(IPC.ProjectOpen, async (e): Promise<OpenResult> => {
+export function registerIpcHandlers(isTrustedSender: SenderGuard = () => true): void {
+  const registerHandler = <Args extends unknown[], R>(
+    channel: string,
+    listener: (event: Electron.IpcMainInvokeEvent, ...args: Args) => R | Promise<R>
+  ): void => {
+    ipcMain.handle(channel, (event, ...args: unknown[]) => {
+      if (!isTrustedSender(event)) throw new Error('拒绝来自非主窗口的请求')
+      return listener(event, ...(args as Args))
+    })
+  }
+
+  registerHandler(IPC.ProjectOpen, async (e): Promise<OpenResult> => {
     const res = await showOpenDialog(e, {
       title: '打开项目',
       filters: PROJECT_FILTERS,
       properties: ['openFile']
     })
     if (res.canceled || res.filePaths.length === 0) return { canceled: true }
-    const result = openProjectFile(res.filePaths[0])
+    const result = await openProjectFile(res.filePaths[0])
     if (!result.error) pushRecent(res.filePaths[0])
     return result
   })
 
-  ipcMain.handle(IPC.ProjectOpenPath, (_e, file: string): OpenResult => {
-    const result = openProjectFile(file)
+  registerHandler(IPC.ProjectOpenPath, async (_e, file: string): Promise<OpenResult> => {
+    const result = await openProjectFile(file)
     if (!result.error) pushRecent(file)
     return result
   })
 
-  ipcMain.handle(
+  registerHandler(
     IPC.ProjectSaveAs,
     async (e, args: { content: string; defaultName: string }): Promise<SaveResult> => {
       const res = await showSaveDialog(e, {
@@ -116,6 +155,7 @@ export function registerIpcHandlers(): void {
       })
       if (res.canceled || !res.filePath) return { canceled: true }
       try {
+        backupExisting(res.filePath)
         atomicWriteFileSync(res.filePath, args.content)
         return { canceled: false, path: res.filePath }
       } catch (err) {
@@ -124,16 +164,11 @@ export function registerIpcHandlers(): void {
     }
   )
 
-  ipcMain.handle(
+  registerHandler(
     IPC.ProjectSaveToPath,
     async (_e, args: { path: string; content: string }): Promise<SaveResult> => {
       try {
-        // 覆盖保存前留一份 .bak，写坏 / 误存时还有上一步可回退
-        try {
-          if (fs.existsSync(args.path)) fs.copyFileSync(args.path, `${args.path}.bak`)
-        } catch {
-          // 备份失败不阻塞保存
-        }
+        backupExisting(args.path)
         atomicWriteFileSync(args.path, args.content)
         return { canceled: false, path: args.path }
       } catch (err) {
@@ -142,7 +177,7 @@ export function registerIpcHandlers(): void {
     }
   )
 
-  ipcMain.handle(IPC.ImportMaterials, async (e): Promise<ImportMaterialsResult> => {
+  registerHandler(IPC.ImportMaterials, async (e): Promise<ImportMaterialsResult> => {
     const res = await showOpenDialog(e, {
       title: '导入物资（CSV / Excel）',
       filters: [
@@ -153,14 +188,14 @@ export function registerIpcHandlers(): void {
       properties: ['openFile']
     })
     if (res.canceled || res.filePaths.length === 0) return { canceled: true, materials: [], skipped: 0 }
-    return importMaterialsFile(res.filePaths[0])
+    return await importMaterialsFile(res.filePaths[0])
   })
 
-  ipcMain.handle(IPC.ImportMaterialsFile, (_e, file: string): ImportMaterialsResult =>
+  registerHandler(IPC.ImportMaterialsFile, (_e, file: string): Promise<ImportMaterialsResult> =>
     importMaterialsFile(file)
   )
 
-  ipcMain.handle(IPC.ImportPeople, async (e): Promise<ImportPeopleResult> => {
+  registerHandler(IPC.ImportPeople, async (e): Promise<ImportPeopleResult> => {
     const res = await showOpenDialog(e, {
       title: '导入人员名单（txt / CSV / Excel，每行一个姓名）',
       filters: [
@@ -170,22 +205,26 @@ export function registerIpcHandlers(): void {
       properties: ['openFile']
     })
     if (res.canceled || res.filePaths.length === 0) return { canceled: true, names: [] }
-    return importPeopleFile(res.filePaths[0])
+    return await importPeopleFile(res.filePaths[0])
   })
 
-  ipcMain.handle(IPC.ImportPeopleFile, (_e, file: string): ImportPeopleResult =>
+  registerHandler(IPC.ImportPeopleFile, (_e, file: string): Promise<ImportPeopleResult> =>
     importPeopleFile(file)
   )
 
-  ipcMain.handle(IPC.DraftSave, (_e, content: string) => writeDraft(content))
+  registerHandler(IPC.DraftSave, (_e, content: string) => writeDraft(content))
 
   ipcMain.on(IPC.DraftSaveSync, (e, content: string) => {
+    if (!isTrustedSender(e)) {
+      e.returnValue = { ok: false, error: '拒绝来自非主窗口的请求' }
+      return
+    }
     e.returnValue = writeDraft(content)
   })
 
-  ipcMain.handle(IPC.DraftLoad, () => readDraft())
+  registerHandler(IPC.DraftLoad, () => readDraft())
 
-  ipcMain.handle(
+  registerHandler(
     IPC.ExportPdf,
     async (e, args: { html: string; defaultName: string; pageNumbers?: boolean }): Promise<SaveResult> => {
       const res = await showSaveDialog(e, {
@@ -196,7 +235,7 @@ export function registerIpcHandlers(): void {
       if (res.canceled || !res.filePath) return { canceled: true }
       try {
         const pdf = await generatePdf(args.html, { pageNumbers: args.pageNumbers === true })
-        fs.writeFileSync(res.filePath, pdf)
+        atomicWriteFileSync(res.filePath, pdf)
         return { canceled: false, path: res.filePath }
       } catch (err) {
         return { canceled: false, error: (err as Error).message }
@@ -204,7 +243,7 @@ export function registerIpcHandlers(): void {
     }
   )
 
-  ipcMain.handle(IPC.ExportPrint, async (_e, html: string) => {
+  registerHandler(IPC.ExportPrint, async (_e, html: string) => {
     try {
       await printHtml(html)
       return {}
@@ -213,7 +252,7 @@ export function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle(
+  registerHandler(
     IPC.ExportCsv,
     async (e, args: { content: string; defaultName: string }): Promise<SaveResult> => {
       const res = await showSaveDialog(e, {
@@ -233,7 +272,7 @@ export function registerIpcHandlers(): void {
     }
   )
 
-  ipcMain.handle(
+  registerHandler(
     IPC.ExportXlsx,
     async (e, args: { data: Uint8Array; defaultName: string }): Promise<SaveResult> => {
       const res = await showSaveDialog(e, {
@@ -243,7 +282,7 @@ export function registerIpcHandlers(): void {
       })
       if (res.canceled || !res.filePath) return { canceled: true }
       try {
-        fs.writeFileSync(res.filePath, Buffer.from(args.data))
+        atomicWriteFileSync(res.filePath, Buffer.from(args.data))
         return { canceled: false, path: res.filePath }
       } catch (err) {
         return { canceled: false, error: (err as Error).message }
@@ -251,7 +290,7 @@ export function registerIpcHandlers(): void {
     }
   )
 
-  ipcMain.handle(IPC.ExportTemplate, async (e): Promise<SaveResult> => {
+  registerHandler(IPC.ExportTemplate, async (e): Promise<SaveResult> => {
     const res = await showSaveDialog(e, {
       title: '下载导入模板',
       defaultPath: path.join(app.getPath('documents'), '导入模板.xlsx'),
@@ -259,18 +298,18 @@ export function registerIpcHandlers(): void {
     })
     if (res.canceled || !res.filePath) return { canceled: true }
     try {
-      fs.writeFileSync(res.filePath, buildTemplateWorkbook())
+      atomicWriteFileSync(res.filePath, buildTemplateWorkbook())
       return { canceled: false, path: res.filePath }
     } catch (err) {
       return { canceled: false, error: (err as Error).message }
     }
   })
 
-  ipcMain.handle(IPC.RevealPath, (_e, p: string) => {
+  registerHandler(IPC.RevealPath, (_e, p: string) => {
     if (p && fs.existsSync(p)) shell.showItemInFolder(p)
   })
 
-  ipcMain.handle(IPC.RecentsList, () => listRecents())
+  registerHandler(IPC.RecentsList, () => listRecents())
 
-  ipcMain.handle(IPC.RecentsRemove, (_e, file: string) => removeRecent(file))
+  registerHandler(IPC.RecentsRemove, (_e, file: string) => removeRecent(file))
 }

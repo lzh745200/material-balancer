@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx'
 import type { PersonRow } from '@/print/rows'
+import { round2 } from '@/utils/format'
 
 /**
  * 结果导出 XLSX（双 sheet）：
@@ -27,7 +28,7 @@ export function buildXlsxWorkbook(rows: PersonRow[], title: string, currency: st
       ])
     })
   }
-  const grand = rows.reduce((acc, r) => acc + r.total, 0)
+  const grand = round2(rows.reduce((acc, r) => acc + r.total, 0))
   detail.push(['', '', '', '', '合计', grand, grand])
 
   const summary: (string | number)[][] = [['序号', '人员姓名', '物资件数', `总价值（${currency}）`]]

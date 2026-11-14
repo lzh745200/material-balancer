@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import * as fs from 'fs'
+import * as os from 'os'
+import * as path from 'path'
 import * as XLSX from 'xlsx'
 import * as iconv from 'iconv-lite'
 import {
@@ -15,6 +18,7 @@ import {
 import { validateProject } from '../src/shared/validate'
 import { MAX_UNITS } from '../src/shared/types'
 import { buildTemplateWorkbook } from '../src/main/services/template'
+import { atomicWriteFileSync } from '../src/main/services/atomic'
 import { buildPersonRows } from '../src/renderer/src/print/rows'
 import { buildPrintHtml } from '../src/renderer/src/print/buildPrintHtml'
 import { buildDetailCsv } from '../src/renderer/src/utils/csvExport'
@@ -144,7 +148,7 @@ describe('parseMaterialsXlsx', () => {
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, '人员名单')
     const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer
-    expect(parsePeopleXlsx(buffer)).toEqual(['张三', '李四'])
+    expect(parsePeopleXlsx(buffer).names).toEqual(['张三', '李四'])
   })
 
   it('人员名单 xlsx：前导空行后的"姓名"表头仍被跳过（回归：表头变成幽灵人员）', () => {
@@ -152,7 +156,7 @@ describe('parseMaterialsXlsx', () => {
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, '人员名单')
     const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer
-    expect(parsePeopleXlsx(buffer)).toEqual(['张三', '李四'])
+    expect(parsePeopleXlsx(buffer).names).toEqual(['张三', '李四'])
   })
 
   it('导入模板包含物资表与人员名单两个 sheet', () => {
@@ -163,14 +167,39 @@ describe('parseMaterialsXlsx', () => {
 
 describe('parsePeople', () => {
   it('每行一个姓名，去空行与重复', () => {
-    expect(parsePeople('张三\n李四\n\n  王五  \n张三\n')).toEqual(['张三', '李四', '王五'])
+    expect(parsePeople('张三\n李四\n\n  王五  \n张三\n').names).toEqual(['张三', '李四', '王五'])
   })
   it('兼容 CSV 取第一列', () => {
-    expect(parsePeople('张三,男\n李四,女')).toEqual(['张三', '李四'])
+    expect(parsePeople('张三,男\n李四,女').names).toEqual(['张三', '李四'])
   })
   it('首列表头（姓名/Name）被跳过而不是导入为人员', () => {
-    expect(parsePeople('姓名\n张三\n李四')).toEqual(['张三', '李四'])
-    expect(parsePeople('Name\nAlice\nBob')).toEqual(['Alice', 'Bob'])
+    expect(parsePeople('姓名\n张三\n李四').names).toEqual(['张三', '李四'])
+    expect(parsePeople('Name\nAlice\nBob').names).toEqual(['Alice', 'Bob'])
+  })
+  it('引号未闭合时阻止导入并报告格式问题，不把多行合并成一人', () => {
+    const result = parsePeople('"张三\n李四')
+    expect(result.names).toEqual([])
+    expect(result.warnings.length).toBeGreaterThan(0)
+  })
+})
+
+describe('atomicWriteFileSync 原子写', () => {
+  it('覆盖已有文件后内容完整，二进制字节不损坏，且不遗留临时文件', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mb-atomic-'))
+    try {
+      const textFile = path.join(dir, 'project.mproj')
+      atomicWriteFileSync(textFile, '旧内容')
+      atomicWriteFileSync(textFile, '新内容')
+      expect(fs.readFileSync(textFile, 'utf-8')).toBe('新内容')
+
+      const binFile = path.join(dir, 'out.bin')
+      const bytes = Uint8Array.from([0, 1, 2, 255])
+      atomicWriteFileSync(binFile, bytes)
+      expect([...fs.readFileSync(binFile)]).toEqual([...bytes])
+      expect(fs.readdirSync(dir).some((f) => f.endsWith('.tmp'))).toBe(false)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
 
@@ -245,6 +274,47 @@ describe('validateProject 项目校验', () => {
     expect(project!.schemes[0].assignment).toEqual({ 'm1#1': 'p1' })
   })
 
+  it('人员和方案超过应用上限时拒绝整个项目，而不是静默截断数据', () => {
+    const validBase = {
+      materials: [],
+      activeSchemeId: null
+    }
+    expect(
+      validateProject({
+        ...validBase,
+        people: Array.from({ length: 201 }, (_, i) => ({ id: `p${i}`, name: `人员${i}` })),
+        schemes: []
+      })
+    ).toBeNull()
+    expect(
+      validateProject({
+        ...validBase,
+        people: [],
+        schemes: Array.from({ length: 31 }, (_, i) => ({
+          id: `s${i}`,
+          name: `方案${i}`,
+          createdAt: '',
+          strategy: 'greedy',
+          assignment: {}
+        }))
+      })
+    ).toBeNull()
+  })
+
+  it('重复的方案 id 被去重，避免当前方案与历史操作指向多条记录', () => {
+    const project = validateProject({
+      materials: [{ id: 'm1', name: '本子', price: 5, quantity: 1 }],
+      people: [{ id: 'p1', name: '张三' }],
+      schemes: [
+        { id: 's1', name: '首个方案', createdAt: '', strategy: 'greedy', assignment: { 'm1#1': 'p1' } },
+        { id: 's1', name: '重复方案', createdAt: '', strategy: 'greedy', assignment: {} }
+      ],
+      activeSchemeId: 's1'
+    })
+    expect(project!.schemes).toHaveLength(1)
+    expect(project!.schemes[0].name).toBe('首个方案')
+  })
+
   it('重复的物资 / 人员 id 被去重（保留首个有效者）', () => {
     const project = validateProject({
       materials: [
@@ -315,14 +385,14 @@ describe('buildPersonRows / buildPrintHtml / buildDetailCsv', () => {
     expect(lines[lines.length - 1]).toContain('合计,14')
   })
 
-  it('CSV 公式注入被转义（= 开头的名称按文本处理）', () => {
+  it('CSV 公式注入被转义（含前导空白的 = 开头名称按文本处理）', () => {
     const risky = buildPersonRows(
       [{ id: 'p1', name: '张三' }],
-      [{ unitId: 'm1#1', materialId: 'm1', name: '=HYPERLINK("http://x","点我")', price: 1 }],
+      [{ unitId: 'm1#1', materialId: 'm1', name: '  =HYPERLINK("http://x","点我")', price: 1 }],
       { 'm1#1': 'p1' }
     )
     const csv = buildDetailCsv(risky, '¥')
-    expect(csv).toContain(`'=HYPERLINK`)
+    expect(csv).toContain(`'  =HYPERLINK`)
   })
 
   it('币种符号含逗号 / 引号时表头加引号包裹', () => {
@@ -369,6 +439,23 @@ describe('buildPersonRows / buildPrintHtml / buildDetailCsv', () => {
     })
     expect(large).toContain('name-cell cont')
     expect((large.match(/name-cell/g) ?? []).length).toBeGreaterThanOrEqual(15)
+  })
+
+  it('XLSX 合计金额按两位小数归一，避免浮点尾差', () => {
+    const decimalRows = buildPersonRows(
+      [
+        { id: 'p1', name: '张三' },
+        { id: 'p2', name: '李四' }
+      ],
+      [
+        { unitId: 'm1#1', materialId: 'm1', name: 'A', price: 0.1 },
+        { unitId: 'm2#1', materialId: 'm2', name: 'B', price: 0.2 }
+      ],
+      { 'm1#1': 'p1', 'm2#1': 'p2' }
+    )
+    const wb = XLSX.read(buildXlsxWorkbook(decimalRows, 'T', '¥'), { type: 'buffer' })
+    const summary = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets['按人汇总'], { header: 1 })
+    expect(summary[3]).toEqual(['', '合计', 2, 0.3])
   })
 
   it('XLSX 导出包含分配明细与按人汇总两个 sheet 且数值正确', () => {

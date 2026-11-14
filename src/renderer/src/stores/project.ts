@@ -327,10 +327,15 @@ export const useProjectStore = defineStore('project', {
     updateMaterial(id: string, patch: Partial<Omit<Material, 'id'>>): void {
       const m = this.materials.find((x) => x.id === id)
       if (!m) return
+      if (patch.name !== undefined && !patch.name.trim()) {
+        throw new Error('物资名称不能为空')
+      }
       if (patch.price !== undefined) {
         const p = round2(Number(patch.price))
         if (!Number.isFinite(p) || p <= 0) throw new Error('单价必须为大于 0 的数字')
       }
+      const nextName = patch.name !== undefined ? patch.name.trim() : m.name
+      const nextPrice = patch.price !== undefined ? round2(Number(patch.price)) : m.price
       let nextQty = m.quantity
       if (patch.quantity !== undefined) {
         const q = Math.floor(Number(patch.quantity))
@@ -344,9 +349,10 @@ export const useProjectStore = defineStore('project', {
         }
         nextQty = q
       }
+      if (nextName === m.name && nextPrice === m.price && nextQty === m.quantity) return
       this.pushHistory()
-      if (patch.name !== undefined && patch.name.trim()) m.name = patch.name.trim()
-      if (patch.price !== undefined) m.price = round2(Number(patch.price))
+      m.name = nextName
+      m.price = nextPrice
       m.quantity = nextQty
     },
 
@@ -361,6 +367,15 @@ export const useProjectStore = defineStore('project', {
       const idx = this.materials.findIndex((x) => x.id === id)
       const target = idx + dir
       if (idx === -1 || target < 0 || target >= this.materials.length) return
+      this.pushHistory()
+      ;[this.materials[idx], this.materials[target]] = [this.materials[target], this.materials[idx]]
+    },
+
+    /** 搜索筛选后，与上/下一个可见物资交换位置（隐藏项不参与排序） */
+    moveMaterialTo(id: string, targetId: string): void {
+      const idx = this.materials.findIndex((x) => x.id === id)
+      const target = this.materials.findIndex((x) => x.id === targetId)
+      if (idx === -1 || target === -1 || idx === target) return
       this.pushHistory()
       ;[this.materials[idx], this.materials[target]] = [this.materials[target], this.materials[idx]]
     },
@@ -395,6 +410,7 @@ export const useProjectStore = defineStore('project', {
       if (this.people.some((x) => x.id !== id && x.name === trimmed)) {
         throw new Error(`已有同名人员「${trimmed}」`)
       }
+      if (p.name === trimmed) return
       this.pushHistory()
       p.name = trimmed
     },
@@ -424,13 +440,20 @@ export const useProjectStore = defineStore('project', {
 
     addImportedPeople(names: string[]): void {
       if (!names.length) return
-      this.pushHistory()
       const existing = new Set(this.people.map((p) => p.name))
-      for (const name of names) {
-        if (existing.has(name)) continue
+      const additions: string[] = []
+      for (const raw of names) {
+        const name = raw.trim()
+        if (!name || existing.has(name)) continue
         existing.add(name)
-        this.people.push({ id: uid('p'), name })
+        additions.push(name)
       }
+      if (!additions.length) return
+      if (this.people.length + additions.length > 200) {
+        throw new Error(`导入后人员数量将超过上限（200 人），请精简名单后再导入`)
+      }
+      this.pushHistory()
+      this.people.push(...additions.map((name) => ({ id: uid('p'), name })))
     },
 
     /* ---------- 分配方案 ---------- */
@@ -506,6 +529,7 @@ export const useProjectStore = defineStore('project', {
       if (!scheme) return
       this.pushHistory()
       scheme.assignment = {}
+      scheme.lockedUnits = undefined
       scheme.strategy = 'manual'
     },
 
@@ -533,6 +557,7 @@ export const useProjectStore = defineStore('project', {
         maxPasses: this.optimizeMaxPasses,
         locked: new Set(scheme.lockedUnits ?? [])
       })
+      if (!result.improved) return
       this.pushHistory()
       scheme.assignment = result.assignment
     },
@@ -546,7 +571,7 @@ export const useProjectStore = defineStore('project', {
     },
 
     switchScheme(id: string): void {
-      if (!this.schemes.some((s) => s.id === id)) return
+      if (id === this.activeSchemeId || !this.schemes.some((s) => s.id === id)) return
       this.pushHistory()
       this.activeSchemeId = id
     },
@@ -563,9 +588,10 @@ export const useProjectStore = defineStore('project', {
 
     renameScheme(id: string, name: string): void {
       const s = this.schemes.find((x) => x.id === id)
-      if (!s || !name.trim()) return
+      const trimmed = name.trim()
+      if (!s || !trimmed || s.name === trimmed) return
       this.pushHistory()
-      s.name = name.trim()
+      s.name = trimmed
     },
 
     /* ---------- 设置 ---------- */
@@ -579,21 +605,38 @@ export const useProjectStore = defineStore('project', {
       printPageNumbers?: boolean
     }): void {
       if (patch.allowSurplus !== undefined) this.allowSurplus = patch.allowSurplus
-      if (patch.optimizeMaxPasses !== undefined) {
+      if (patch.optimizeMaxPasses !== undefined && Number.isFinite(patch.optimizeMaxPasses)) {
         this.optimizeMaxPasses = Math.min(500, Math.max(1, Math.floor(patch.optimizeMaxPasses)))
       }
-      if (patch.randomRestarts !== undefined) {
+      if (patch.randomRestarts !== undefined && Number.isFinite(patch.randomRestarts)) {
         this.randomRestarts = Math.min(100, Math.max(0, Math.floor(patch.randomRestarts)))
       }
-      if (patch.randomSeed !== undefined) this.randomSeed = patch.randomSeed
+      if (patch.randomSeed !== undefined) {
+        this.randomSeed =
+          patch.randomSeed !== null && Number.isFinite(patch.randomSeed)
+            ? Math.min(0xffffffff, Math.max(1, Math.floor(patch.randomSeed)))
+            : null
+      }
       if (patch.printPageNumbers !== undefined) this.printPageNumbers = patch.printPageNumbers
     },
 
     updateSettings(patch: { title?: string; remark?: string; currency?: string }): void {
+      const nextTitle =
+        patch.title !== undefined ? patch.title.trim() || DEFAULT_TITLE : this.title
+      const nextRemark = patch.remark !== undefined ? patch.remark : this.remark
+      const nextCurrency =
+        patch.currency !== undefined && patch.currency ? patch.currency : this.currency
+      if (
+        nextTitle === this.title &&
+        nextRemark === this.remark &&
+        nextCurrency === this.currency
+      ) {
+        return
+      }
       this.pushHistory()
-      if (patch.title !== undefined) this.title = patch.title.trim() || DEFAULT_TITLE
-      if (patch.remark !== undefined) this.remark = patch.remark
-      if (patch.currency !== undefined && patch.currency) this.currency = patch.currency
+      this.title = nextTitle
+      this.remark = nextRemark
+      this.currency = nextCurrency
     },
 
     /* ---------- 导入前置校验 ---------- */

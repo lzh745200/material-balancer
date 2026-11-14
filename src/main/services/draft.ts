@@ -1,14 +1,12 @@
 import { app } from 'electron'
 import * as fs from 'fs'
 import * as path from 'path'
+import type { DraftWriteResult } from '@shared/types'
 import { atomicWriteFileSync } from './atomic'
 
 /** 草稿自动保存（userData/draft.mproj.json），失败不致命但要如实上报。 */
 
-export interface DraftWriteResult {
-  ok: boolean
-  error?: string
-}
+const MAX_DRAFT_BYTES = 25 * 1024 * 1024
 
 function draftPath(): string {
   return path.join(app.getPath('userData'), 'draft.mproj.json')
@@ -35,6 +33,14 @@ export function writeDraft(content: string): DraftWriteResult {
 export function readDraft(): string | null {
   try {
     if (!fs.existsSync(draftPath())) return null
+    if (fs.statSync(draftPath()).size > MAX_DRAFT_BYTES) {
+      try {
+        fs.unlinkSync(draftPath())
+      } catch {
+        // 删除失败不影响安全返回
+      }
+      return null
+    }
     const content = fs.readFileSync(draftPath(), 'utf-8')
     try {
       JSON.parse(content)

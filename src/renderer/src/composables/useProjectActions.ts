@@ -29,12 +29,21 @@ export function useProjectActions() {
       .catch(() => false)
   }
 
+  /** 用户已明确丢弃旧项目后，清除可能比新项目更早写入的恢复草稿 */
+  async function clearDiscardedDraft(): Promise<void> {
+    try {
+      const res = await window.api.saveDraft('')
+      if (!res?.ok) ElMessage.warning(`旧草稿清理失败：${res?.error || '未知错误'}`)
+    } catch (err) {
+      ElMessage.warning(`旧草稿清理失败：${(err as Error).message}`)
+    }
+  }
+
   async function onNew(): Promise<void> {
-    const ok = await confirmDiscard(
-      '当前项目尚未保存，新建后将丢失未保存的修改（草稿仍会保留）。确定继续吗？'
-    )
+    const ok = await confirmDiscard('当前项目尚未保存，新建后将丢弃这些修改。确定继续吗？')
     if (!ok) return
     store.newProject()
+    await clearDiscardedDraft()
   }
 
   async function afterOpen(res: { path?: string; error?: string }): Promise<void> {
@@ -60,6 +69,7 @@ export function useProjectActions() {
       ElMessage.error((err as Error).message || '打开文件失败')
       return
     }
+    await clearDiscardedDraft()
     await afterOpen(res)
   }
 
@@ -79,33 +89,55 @@ export function useProjectActions() {
       ElMessage.error((err as Error).message || '打开文件失败')
       return
     }
+    await clearDiscardedDraft()
     await afterOpen(res)
+  }
+
+  /**
+   * 保存回包只对发起保存时的快照负责。若等待磁盘/对话框期间又有编辑，
+   * 更新路径但保留 dirty，并保留恢复草稿，不能把新修改误标为已保存。
+   */
+  async function finishSave(content: string, res: { path?: string; error?: string }): Promise<void> {
+    const savedPath = res.path ?? store.filePath
+    if (!savedPath) {
+      ElMessage.error('保存失败：未获得目标文件路径')
+      return
+    }
+    store.markSaved(savedPath)
+    if (projectJson() !== content) {
+      store.dirty = true
+      ElMessage.warning(`已保存到 ${savedPath}，但保存期间的新修改尚未保存`)
+      return
+    }
+    try {
+      const draft = await window.api.saveDraft('')
+      if (!draft?.ok) ElMessage.warning(`项目已保存，但恢复草稿清理失败：${draft?.error || '未知错误'}`)
+    } catch (err) {
+      ElMessage.warning(`项目已保存，但恢复草稿清理失败：${(err as Error).message}`)
+    }
+    ElMessage.success(`已保存到：${savedPath}`)
   }
 
   async function onSave(): Promise<void> {
     if (!store.filePath) return onSaveAs()
-    const res = await window.api.saveProjectToPath(store.filePath, projectJson())
+    const content = projectJson()
+    const res = await window.api.saveProjectToPath(store.filePath, content)
     if (res.error) {
       ElMessage.error(`保存失败：${res.error}`)
       return
     }
-    store.markSaved(res.path ?? store.filePath!)
-    // 已落盘：清除崩溃恢复草稿，避免下次启动误报「上次未正常关闭」
-    await window.api.saveDraft('')
-    ElMessage.success('已保存')
+    await finishSave(content, res)
   }
 
   async function onSaveAs(): Promise<void> {
-    const res = await window.api.saveProjectAs(projectJson(), `${store.defaultFileName}.mproj`)
+    const content = projectJson()
+    const res = await window.api.saveProjectAs(content, `${store.defaultFileName}.mproj`)
     if (res.canceled) return
     if (res.error) {
       ElMessage.error(`保存失败：${res.error}`)
       return
     }
-    store.markSaved(res.path!)
-    // 已落盘：清除崩溃恢复草稿，避免下次启动误报「上次未正常关闭」
-    await window.api.saveDraft('')
-    ElMessage.success(`已保存到：${res.path}`)
+    await finishSave(content, res)
   }
 
   /** 导入结果入 store（对话框与拖拽共用） */
@@ -138,11 +170,28 @@ export function useProjectActions() {
 
   function applyImportPeople(res: ImportPeopleResult): void {
     if (res.names.length === 0) {
-      ElMessage.warning('未解析到有效姓名。请确保文件每行一个姓名。')
+      for (const w of (res.warnings ?? []).slice(0, 3)) ElMessage.warning(`解析提示：${w}`)
+      ElMessage.warning(
+        res.warnings?.length
+          ? '人员文件存在格式错误，已取消导入。请检查未闭合的引号后重试。'
+          : '未解析到有效姓名。请确保文件每行一个姓名。'
+      )
       return
     }
-    store.addImportedPeople(res.names)
-    ElMessage.success(`已导入 ${res.names.length} 名人员（重复姓名已忽略）`)
+    for (const w of (res.warnings ?? []).slice(0, 3)) ElMessage.warning(`解析提示：${w}`)
+    const before = store.people.length
+    try {
+      store.addImportedPeople(res.names)
+    } catch (err) {
+      ElMessage.error((err as Error).message || '导入人员失败')
+      return
+    }
+    const added = store.people.length - before
+    if (added === 0) {
+      ElMessage.warning('文件中的姓名均已存在，未新增人员')
+      return
+    }
+    ElMessage.success(`已导入 ${added} 名人员（重复姓名已忽略）`)
   }
 
   async function onImportMaterials(): Promise<void> {

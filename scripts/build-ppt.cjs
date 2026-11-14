@@ -75,7 +75,7 @@ function arrow(s, x, y, w, color = PRIMARY) {
   s.addText("把每一份物资，都分得明明白白", { x: 0, y: 2.72, w: W, h: 0.5, fontSize: 20, fontFace: F, color: PRIM_SOFT, align: "center", charSpacing: 2, margin: 0 });
   s.addText("系统介绍 · 从功能到架构", { x: 0, y: 4.55, w: W, h: 0.4, fontSize: 16, fontFace: F, color: PRIM_SOFT, align: "center", margin: 0 });
   s.addShape(p.shapes.ROUNDED_RECTANGLE, { x: 5.99, y: 5.15, w: 1.35, h: 0.46, fill: { color: "12574F" }, rectRadius: 0.23, line: { type: "none" } });
-  s.addText("v1.1.1", { x: 5.99, y: 5.15, w: 1.35, h: 0.46, fontSize: 15, bold: true, fontFace: F, color: WHITE, align: "center", valign: "middle", margin: 0 });
+  s.addText("v1.1.2", { x: 5.99, y: 5.15, w: 1.35, h: 0.46, fontSize: 15, bold: true, fontFace: F, color: WHITE, align: "center", valign: "middle", margin: 0 });
   s.addText("完全离线 · Windows x64 / 麒麟 V10 ARM64", { x: 0, y: 6.55, w: W, h: 0.35, fontSize: 13, fontFace: F, color: PRIM_SOFT, align: "center", margin: 0 });
   s.addNotes("开场：一句话定位——把一份物资清单尽量公平地分给一群人，并生成可打印的 A4 签收表。强调完全离线。");
 })();
@@ -191,7 +191,7 @@ divider("01", "项目概述", ["项目定位", "解决的问题", "核心特性"
   stat(s, M, 4.55, 3.9, "2", "平台安装包（Win x64 / 麒麟 ARM64）");
   stat(s, 4.72, 4.55, 3.9, "100%", "离线运行，数据不出本机");
   stat(s, 8.88, 4.55, 3.9, "50", "步撤销 / 重做");
-  s.addText("数据来源：vitest 实测与 GitHub Actions CI（2026-09，v1.1.1）", { x: M, y: 6.55, w: 9, h: 0.32, fontSize: 12, fontFace: F, color: MUTED, margin: 0 });
+  s.addText("数据来源：vitest 实测与 GitHub Actions CI（2026-11，v1.1.2）", { x: M, y: 6.55, w: 9, h: 0.32, fontSize: 12, fontFace: F, color: MUTED, margin: 0 });
 })();
 
 /* =============== 8 章节页 02 =============== */
@@ -866,11 +866,11 @@ divider("04", "技术架构", ["三进程模型", "数据流动", "确定性设�
 /* =============== 35 质量保障（图表页） =============== */
 (() => {
   const s = slide();
-  header(s, "QUALITY", "质量保障：98 个测试组成的安全网");
+  header(s, "QUALITY", "质量保障：113 个测试组成的安全网");
   s.addChart(p.charts.BAR, [{
     name: "测试用例数",
-    labels: ["算法", "导入/导出 IO", "数据仓库 store", "界面组件"],
-    values: [23, 37, 32, 6]
+    labels: ["算法", "导入/导出 IO", "数据仓库 store", "主进程/IPC", "安全校验", "界面组件"],
+    values: [23, 42, 37, 1, 4, 6]
   }], {
     x: M, y: 1.95, w: 6.6, h: 4.3, barDir: "col",
     chartColors: ["0F766E", "F59E0B", "14A89C", "8FD4CD"],
@@ -1029,8 +1029,8 @@ divider("05", "使用指南与展望", ["五步上手", "快捷键", "性能指�
   s.addShape(p.shapes.LINE, { x: 1.2, y: 2.6, w: 9.6, h: 0, line: { color: PRIM_SOFT, width: 3 } });
   const ver = [
     ["v1.0.0", "2025-08", "三策略 · 打印导出 · 项目文件 · 撤销重做", false],
-    ["v1.1.1（当前）", "2026-09", "麒麟适配三层防御 · install.sh 一键安装 · 30+ 缺陷修复 · 未分配池 · 锁定重优化 · Excel 导出", true],
-    ["未来", "—", "打印预览与边距配置 · 代码签名 · SheetJS 升级 · 界面主题", false]
+    ["v1.1.2（当前）", "2026-11", "深度审计 · 草稿/保存并发保护 · IPC 与打印隔离 · 导入格式防线 · 导出原子写 · 依赖安全升级", true],
+    ["未来", "—", "打印预览与边距配置 · 代码签名 · 界面主题", false]
   ];
   ver.forEach(([t, d, desc, cur], i) => {
     const x = 1.2 + i * 3.7;
@@ -1041,8 +1041,8 @@ divider("05", "使用指南与展望", ["五步上手", "快捷键", "性能指�
   });
   card(s, M, 5.4, 12.23, 1.15, PANEL);
   s.addText([
-    { text: "v1.1.0 修复的关键缺陷（节选）：", options: { bold: true, color: PRIMARY, breakLine: true } },
-    { text: "损坏文件不再崩溃 · 算法结果跨机器一致 · 数量调整后不再静默漏分配 · 关窗未保存确认 · 打印失败如实报错 · CSV 防公式注入", options: { color: TEXT } }
+    { text: "v1.1.2 深度审计修复（节选）：", options: { bold: true, color: PRIMARY, breakLine: true } },
+    { text: "草稿写失败阻止关窗 · 保存期间新编辑不误标 · 主窗口 IPC 来源校验 · 人员格式错误阻断 · PDF/Excel 原子导出 · SheetJS 安全升级", options: { color: TEXT } }
   ], { x: 0.9, y: 5.4, w: 11.6, h: 1.15, fontSize: 13.5, fontFace: F, paraSpaceAfter: 5, valign: "middle", margin: 0 });
 })();
 
@@ -1055,7 +1055,7 @@ divider("05", "使用指南与展望", ["五步上手", "快捷键", "性能指�
   s.addShape(p.shapes.OVAL, { x: 8.68, y: 4.28, w: 0.68, h: 0.68, fill: { color: PRIM_MID }, line: { type: "none" } });
   s.addText("谢谢观看", { x: 0, y: 2.0, w: W, h: 1.0, fontSize: 50, bold: true, fontFace: F, color: WHITE, align: "center", charSpacing: 6, margin: 0 });
   s.addText("愿每一次发放，都分得明明白白", { x: 0, y: 3.1, w: W, h: 0.5, fontSize: 18, fontFace: F, color: PRIM_SOFT, align: "center", margin: 0 });
-  s.addText("github.com/lzh745200/material-balancer   ·   v1.1.1   ·   MIT License",
+  s.addText("github.com/lzh745200/material-balancer   ·   v1.1.2   ·   MIT License",
     { x: 0, y: 5.55, w: W, h: 0.4, fontSize: 14, fontFace: F, color: PRIM_SOFT, align: "center", margin: 0 });
 })();
 

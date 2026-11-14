@@ -103,6 +103,14 @@ export interface ImportPeopleResult {
   canceled: boolean
   path?: string
   names: string[]
+  /** 解析器报告的问题（如 CSV 引号未闭合），用于阻止并提示错误导入 */
+  warnings?: string[]
+  error?: string
+}
+
+/** 草稿写入结果；同步兜底也返回该结果，失败时渲染层可阻止窗口关闭 */
+export interface DraftWriteResult {
+  ok: boolean
   error?: string
 }
 
@@ -158,9 +166,9 @@ export interface Api {
   /** 按路径导入人员（拖拽），不弹对话框 */
   importPeopleFromPath(path: string): Promise<ImportPeopleResult>
   /** 保存草稿（content 为空字符串时删除草稿）；写失败时 ok=false 并带 error */
-  saveDraft(content: string): Promise<{ ok: boolean; error?: string }>
+  saveDraft(content: string): Promise<DraftWriteResult>
   /** 关窗时的同步兜底保存（阻塞渲染进程直到主进程写完） */
-  saveDraftSync(content: string): void
+  saveDraftSync(content: string): DraftWriteResult
   /** 向主进程同步当前未保存标志（用于关窗确认） */
   notifyDirty(dirty: boolean): void
   /** 读取草稿，无草稿返回 null */

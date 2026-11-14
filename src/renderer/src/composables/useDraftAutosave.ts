@@ -1,4 +1,5 @@
 import { onBeforeUnmount, onMounted, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import { useProjectStore } from '@/stores/project'
 
 const DEBOUNCE_MS = 1500
@@ -33,19 +34,21 @@ export function useDraftAutosave(): void {
     })
   }
 
-  const onBeforeUnload = () => {
+  const onBeforeUnload = (e: BeforeUnloadEvent) => {
     if (timer) {
       clearTimeout(timer)
       timer = null
     }
-    // 仅在有未保存修改时同步兜底写草稿；干净退出不写，避免下次启动误报「上次未正常关闭」。
-    // 不 dirty 时也不主动清草稿，以保留「新建时确认丢弃但草稿仍保留」的既有语义。
     if (!store.dirty) return
     // 同步兜底保存：invoke 在窗口卸载时可能来不及送达，这里必须阻塞
     try {
-      window.api.saveDraftSync(payload())
-    } catch {
-      // 最后兜底失败已无能为力
+      const res = window.api.saveDraftSync(payload())
+      if (!res?.ok) throw new Error(res?.error || '未知错误')
+    } catch (err) {
+      // 草稿写失败时取消本次卸载，避免主进程已确认「保留草稿」却实际丢失
+      e.preventDefault()
+      e.returnValue = ''
+      ElMessage.error(`草稿保存失败，已取消关闭：${(err as Error).message}`)
     }
   }
 

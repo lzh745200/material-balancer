@@ -55,7 +55,7 @@
 ```bash
 npm install        # 安装依赖（.npmrc 已配置 Electron 国内镜像）
 npm run dev        # 开发模式（热更新）
-npm test           # 运行 98 个单元 + 组件测试
+npm test           # 运行全部单元、主进程与组件测试
 npm run lint       # ESLint 检查
 npm run typecheck  # TypeScript 类型检查
 npm run build      # 构建产物到 out/
@@ -74,8 +74,8 @@ Node.js ≥ 18（CI 使用 20，见 `.nvmrc`）。
 2. **正式发布**：推送与 `package.json` 版本一致的标签，自动创建 GitHub Release 并附全部安装包：
 
 ```bash
-git tag v1.1.1
-git push origin v1.1.1
+git tag v1.1.2
+git push origin v1.1.2
 ```
 
 ### 麒麟 V10（ARM64）安装

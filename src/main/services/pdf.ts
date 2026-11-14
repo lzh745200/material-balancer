@@ -1,4 +1,5 @@
 import { app, BrowserWindow } from 'electron'
+import { randomUUID } from 'crypto'
 import { pathToFileURL } from 'url'
 import * as fs from 'fs'
 import * as path from 'path'
@@ -18,7 +19,8 @@ export function fontFaceStyle(): string {
   for (const name of PRINT_FONT_CANDIDATES) {
     const file = path.join(dir, name)
     if (fs.existsSync(file)) {
-      const url = pathToFileURL(file).href
+      // pathToFileURL 不会编码单引号，直接拼进 CSS url('') 会在含 ' 的安装路径下截断
+      const url = pathToFileURL(file).href.replace(/'/g, '%27')
       return `<style>
 @font-face{font-family:'NotoSansSC';src:url('${url}') format('${name.endsWith('.otf') ? 'opentype' : 'truetype'}');font-weight:normal;font-style:normal;}
 body{font-family:'NotoSansSC','Microsoft YaHei','Noto Sans CJK SC','WenQuanYi Micro Hei',sans-serif !important;}
@@ -40,12 +42,34 @@ async function renderToHiddenWindow(html: string): Promise<RenderedPrint> {
   const tmp = path.join(dir, 'print.html')
   const win = new BrowserWindow({
     show: false,
-    webPreferences: { sandbox: true, offscreen: false }
+    webPreferences: {
+      // 独立内存会话：打印页的 CSP 不污染主窗口，且并发导出互不干扰
+      partition: `mb-print-${randomUUID()}`,
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      offscreen: false
+    }
   })
+  let cleaned = false
   const cleanup = (): void => {
-    win.destroy()
+    if (cleaned) return
+    cleaned = true
+    if (!win.isDestroyed()) win.destroy()
     fs.promises.rm(dir, { recursive: true, force: true }).catch(() => undefined)
   }
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  win.webContents.on('will-navigate', (e) => e.preventDefault())
+  win.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [
+          "default-src 'none'; style-src 'unsafe-inline'; font-src file:; img-src data:; base-uri 'none'; form-action 'none'"
+        ]
+      }
+    })
+  })
   try {
     await fs.promises.writeFile(tmp, html.replace('<!--FONT_INJECT-->', fontFaceStyle()), 'utf-8')
     await win.loadFile(tmp)
@@ -53,10 +77,17 @@ async function renderToHiddenWindow(html: string): Promise<RenderedPrint> {
     cleanup()
     throw err
   }
-  // 等待字体加载完成，替代固定延时（字体未就绪会导致 PDF 走回退字体）
-  await win.webContents
-    .executeJavaScript('document.fonts ? document.fonts.ready.then(() => true) : true')
-    .catch(() => undefined)
+  // 等待字体加载完成，替代固定延时；加超时兜底，损坏字体不会让导出永久挂起
+  let timeout: ReturnType<typeof setTimeout> | null = null
+  await Promise.race([
+    win.webContents
+      .executeJavaScript('document.fonts ? document.fonts.ready.then(() => true) : true')
+      .catch(() => undefined),
+    new Promise<void>((resolve) => {
+      timeout = setTimeout(resolve, 3000)
+    })
+  ])
+  if (timeout) clearTimeout(timeout)
   // 少量余量等待排版稳定
   await new Promise((r) => setTimeout(r, 60))
   return { win, cleanup }

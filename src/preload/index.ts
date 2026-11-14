@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import { IPC, type Api, type MenuAction } from '@shared/types'
+import { IPC, type Api, type DraftWriteResult, type MenuAction } from '@shared/types'
 
 const api: Api = {
   openProject: () => ipcRenderer.invoke(IPC.ProjectOpen),
@@ -15,7 +15,7 @@ const api: Api = {
   saveDraft: (content) => ipcRenderer.invoke(IPC.DraftSave, content),
   saveDraftSync: (content) => {
     // 关窗兜底：同步等待主进程写完，避免窗口销毁时异步消息丢失
-    ipcRenderer.sendSync(IPC.DraftSaveSync, content)
+    return ipcRenderer.sendSync(IPC.DraftSaveSync, content) as DraftWriteResult
   },
   notifyDirty: (dirty) => ipcRenderer.send(IPC.ProjectDirtyChanged, dirty),
   loadDraft: () => ipcRenderer.invoke(IPC.DraftLoad),

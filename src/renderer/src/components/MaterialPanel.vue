@@ -99,8 +99,8 @@
             <template v-else>
               <el-button link type="primary" size="small" @click="startEdit(row)">编辑</el-button>
               <el-button link type="danger" size="small" @click="remove(row)">删除</el-button>
-              <el-button link size="small" :disabled="$index === 0" @click="store.moveMaterial(row.id, -1)">↑</el-button>
-              <el-button link size="small" :disabled="$index === filtered.length - 1" @click="store.moveMaterial(row.id, 1)">↓</el-button>
+              <el-button link size="small" :disabled="$index === 0" @click="move(row, -1)">↑</el-button>
+              <el-button link size="small" :disabled="$index === filtered.length - 1" @click="move(row, 1)">↓</el-button>
             </template>
           </template>
         </el-table-column>
@@ -186,6 +186,16 @@ function saveEdit(row: Material): void {
     return
   }
   editingId.value = null
+}
+
+function move(row: Material, dir: -1 | 1): void {
+  if (!keyword.value.trim()) {
+    store.moveMaterial(row.id, dir)
+    return
+  }
+  const index = filtered.value.findIndex((m) => m.id === row.id)
+  const target = filtered.value[index + dir]
+  if (target) store.moveMaterialTo(row.id, target.id)
 }
 
 function remove(row: Material): void {
