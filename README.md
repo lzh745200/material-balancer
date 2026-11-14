@@ -62,7 +62,7 @@ npm run build      # 构建产物到 out/
 npm run ppt        # 重新生成 docs/系统介绍.pptx（44 页）
 ```
 
-Node.js ≥ 18（CI 使用 20，见 `.nvmrc`）。
+Node.js ≥ 22（CI 使用 22，见 `.nvmrc`）。
 
 ## 获取安装包（GitHub Actions 云端构建）
 
